@@ -2,10 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Icon, type IconName } from "@/components/icons";
 import { TopBand } from "@/components/top-band";
+import { PITCH_FILM } from "@/lib/pitch";
 
 export const metadata: Metadata = { title: "For agencies" };
-
-const PITCH = { src: "/pitch/vantage-agency-pitch.mp4", poster: "/pitch/poster.jpg" };
 
 // What the app does today, in the pitch's own terms. Keep these true to the product.
 const POINTS: { icon: IconName; title: string; text: string }[] = [
@@ -42,8 +41,8 @@ export default function AgenciesPage() {
       />
       <main className="page">
         <div className="pitch-video">
-          <video controls playsInline preload="metadata" poster={PITCH.poster} aria-label="Vantage for agencies, a 47-second film">
-            <source src={PITCH.src} type="video/mp4" />
+          <video controls playsInline preload="metadata" poster={PITCH_FILM.poster} aria-label={PITCH_FILM.label}>
+            <source src={PITCH_FILM.src} type="video/mp4" />
             This browser can&apos;t play the video.
           </video>
         </div>

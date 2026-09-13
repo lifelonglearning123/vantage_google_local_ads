@@ -1471,6 +1471,24 @@ label.check input {
   background: rgb(32 30 29 / 0.75);
 }
 
+/* A dialog opened from an ink panel still sits on the ground colour: undo the panel's light-on-dark styles. */
+.on-ink .help-dialog .btn-quiet {
+  color: var(--text-2);
+}
+
+.on-ink .help-dialog .btn-quiet:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.on-ink .help-dialog :focus-visible {
+  outline-color: var(--ink);
+}
+
+.on-ink .help-dialog .help-link {
+  color: var(--ink);
+}
+
 .help-dialog-head {
   display: flex;
   align-items: center;
@@ -1514,6 +1532,59 @@ label.check input {
 
   .help-dialog-head {
     padding-left: 16px;
+  }
+}
+
+/* ---- the pitch film in the front page's story panel ---- */
+
+.story-film {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 0;
+}
+
+.story-film video {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: var(--ink);
+  border: 2px solid var(--n700);
+}
+
+.story-film figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  color: var(--on-ink-2);
+  font-size: 14px;
+}
+
+.story-film figcaption a {
+  color: var(--ground);
+  font-weight: 600;
+  text-decoration-color: var(--amber);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.story-film-open {
+  display: none;
+}
+
+.help-dialog .pitch-video {
+  border: 0;
+}
+
+@media (max-width: 900px) {
+  .story-film {
+    display: none;
+  }
+
+  .story-film-open {
+    display: inline-flex;
   }
 }
 
