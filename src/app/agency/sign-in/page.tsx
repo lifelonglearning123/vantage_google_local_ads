@@ -33,6 +33,8 @@ export default async function AgencySignInPage() {
         </section>
         <p className="auth-foot">
           Connecting your own sub-account? <Link href="/">Connect here</Link>
+          <br />
+          New to Vantage? <Link href="/help">Watch the walkthrough</Link>
         </p>
       </div>
     </AuthLayout>

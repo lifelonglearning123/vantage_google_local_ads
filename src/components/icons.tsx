@@ -14,6 +14,15 @@ const PATHS = {
       <path d="m12 5 7 7-7 7" />
     </>
   ),
+  // circle-help: the walkthrough
+  help: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </>
+  ),
+  play: <polygon points="6 3 20 12 6 21 6 3" />,
   attention: (
     <>
       <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />

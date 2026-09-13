@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { HelpButton } from "@/components/help-button";
 import { TopBand } from "@/components/top-band";
 import { ClientSettingsView } from "@/app/settings/client-settings";
 import { readClient } from "@/lib/clients";
@@ -26,7 +27,12 @@ export default async function AgencyClientPage({ params }: PageProps<"/agency/cl
             Nexus Portal sub-account <span className="num">{client.locationId}</span>
           </>
         }
-        actions={<AgencySignOut />}
+        actions={
+          <>
+            <HelpButton chapter="signal-number" label="Help" look="band" />
+            <AgencySignOut />
+          </>
+        }
       />
       <main className="page">
         <ClientSettingsView client={client} viewer="agency" />

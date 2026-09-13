@@ -1318,3 +1318,242 @@ label.check input {
   min-height: 100vh;
   padding: 24px clamp(16px, 8vw, 120px);
 }
+
+/* ---- help: the walkthrough, on its page and in a dialog ---- */
+
+.caps {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.walkthrough {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  background: var(--ground);
+  border: 2px solid var(--ink);
+}
+
+.walkthrough-video {
+  background: var(--ink);
+}
+
+.walkthrough-video video {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: var(--ink);
+}
+
+.chapters {
+  padding: 16px 0 8px;
+  border-left: 2px solid var(--ink);
+}
+
+.chapters .caps {
+  padding: 0 20px 10px;
+}
+
+.chapters ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chapter {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 20px;
+  border: 0;
+  border-top: 2px solid var(--rule-soft);
+  background: transparent;
+  color: var(--ink);
+  font: 600 15px/1.35 var(--font);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chapter:hover {
+  background: var(--surface);
+}
+
+.chapter:focus-visible {
+  outline-offset: -4px;
+}
+
+.chapter[aria-current="step"] {
+  background: var(--ink);
+  color: var(--ground);
+}
+
+.chapter-time {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.chapter[aria-current="step"] .chapter-time {
+  color: var(--amber);
+}
+
+@media (max-width: 860px) {
+  .walkthrough {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chapters {
+    border-left: 0;
+    border-top: 2px solid var(--ink);
+  }
+}
+
+.help-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: 600 14px/1 var(--font);
+  text-decoration: underline;
+  text-decoration-color: var(--amber);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+
+.on-ink .help-link {
+  color: var(--ground);
+}
+
+.section-head .help-link,
+.status-panel .help-link {
+  grid-column: 2;
+}
+
+.sorting .help-link {
+  margin-top: 4px;
+}
+
+@media (max-width: 480px) {
+  .band .btn-label {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .status-panel .help-link {
+    grid-column: auto;
+  }
+}
+
+.help-dialog {
+  width: min(1100px, calc(100vw - 32px));
+  max-width: none;
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  border: 2px solid var(--ink);
+  background: var(--ground);
+  color: var(--ink);
+}
+
+.help-dialog::backdrop {
+  background: rgb(32 30 29 / 0.75);
+}
+
+.help-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px 10px 24px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.help-dialog-head h2 {
+  font-size: 20px;
+}
+
+.help-dialog .walkthrough {
+  border: 0;
+}
+
+.help-dialog-foot {
+  padding: 12px 24px;
+  border-top: 2px solid var(--ink);
+  color: var(--text-2);
+  font-size: 14px;
+}
+
+.help-dialog-foot a {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration-color: var(--amber);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+@media (max-width: 640px) {
+  .help-dialog {
+    width: 100vw;
+    max-height: 100vh;
+    height: 100vh;
+    margin: 0;
+    border: 0;
+  }
+
+  .help-dialog-head {
+    padding-left: 16px;
+  }
+}
+
+.guide {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 2px solid var(--rule);
+}
+
+.guide li {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 6px 16px;
+  align-items: baseline;
+  padding: 20px 0;
+  border-bottom: 2px solid var(--rule-soft);
+}
+
+.guide h3 {
+  font-size: 18px;
+}
+
+.guide p {
+  grid-column: 2;
+  max-width: 68ch;
+  color: var(--text-2);
+}
+
+.guide .chapter-time {
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .guide li {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .guide li > .btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+}

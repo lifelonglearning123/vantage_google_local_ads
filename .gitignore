@@ -36,6 +36,9 @@ yarn-error.log*
 # client settings saved on localhost (Vercel uses a private Blob store)
 /.data/
 
+# source video exports; the site serves the web copy in public/walkthrough
+/*.mp4
+
 # vercel
 .vercel
 

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { ConnectForm } from "@/components/connect-form";
+import { HelpButton } from "@/components/help-button";
 import { Icon } from "@/components/icons";
 import { TopBand } from "@/components/top-band";
 import { listClients, type ClientSettings } from "@/lib/clients";
@@ -24,7 +25,12 @@ export default async function AgencyPage() {
         tag="Agency"
         title="Clients"
         subtitle="Every sub-account connected to the app, whether you added it or the client connected it themselves."
-        actions={<AgencySignOut />}
+        actions={
+          <>
+            <HelpButton chapter="clients" label="Help" look="band" />
+            <AgencySignOut />
+          </>
+        }
       />
       <main className="page">
         <Suspense

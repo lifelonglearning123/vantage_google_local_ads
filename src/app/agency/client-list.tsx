@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
+import { HelpButton } from "@/components/help-button";
 import { Icon, type IconName } from "@/components/icons";
 
 export type ClientState = "live" | "todo" | "refused" | "unknown";
@@ -55,6 +56,7 @@ export function ClientList({ rows, addForm }: { rows: ClientRow[]; addForm: Reac
                 Their location ID, and a Private Integration token made in their sub-account. You&apos;ll choose their
                 number, stages and services next.
               </p>
+              <HelpButton chapter="add-client" label="Watch how to add a client" />
               {rows.length ? (
                 <button type="button" className="btn btn-quiet add-cancel" onClick={() => setAdding(false)}>
                   Cancel

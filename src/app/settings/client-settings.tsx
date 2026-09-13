@@ -1,3 +1,4 @@
+import { HelpButton } from "@/components/help-button";
 import { Icon } from "@/components/icons";
 import type { ClientSettings } from "@/lib/clients";
 import { formatPhone } from "@/lib/phone";
@@ -28,6 +29,7 @@ export async function ClientSettingsView({ client, viewer }: { client: ClientSet
               ? "Add the client again from All clients, with a new token."
               : "Sign out, then connect again with a new token."}
           </p>
+          <HelpButton chapter="add-client" label="Watch how to reconnect" />
         </section>
       ) : todo.length === 0 ? (
         <section className="status-panel status-live" aria-labelledby="status-title">

@@ -3,6 +3,7 @@
 import { unstable_rethrow } from "next/navigation";
 import { useEffect, useState, useTransition, type FormEvent } from "react";
 import { CallFlow } from "@/components/call-flow";
+import { HelpButton } from "@/components/help-button";
 import { Icon, type IconName } from "@/components/icons";
 import type { Pipeline } from "@/lib/ghl";
 import { formatPhone } from "@/lib/phone";
@@ -170,6 +171,7 @@ export function SettingsForm({
               </span>
               <h2 id="numbers-title">Signal number</h2>
               <p>Only calls to this number are sorted. Calls {their} team makes are left alone.</p>
+              <HelpButton chapter="signal-number" />
             </div>
             <div className="field">
               <label htmlFor="numbers">The number customers ring</label>
@@ -205,6 +207,7 @@ export function SettingsForm({
               </span>
               <h2 id="stages-title">Where calls go</h2>
               <p>{agency ? "Their" : "Your"} pipeline and stages, straight from Nexus Portal.</p>
+              <HelpButton chapter="pipeline" />
             </div>
             {pipelines.length === 0 ? (
               <div className="alert alert-warn" role="alert">
@@ -298,6 +301,7 @@ export function SettingsForm({
                 Callers asking for one of these go to {names.qualified ? `“${names.qualified}”` : "the Qualified stage"}. It
                 matches by meaning, so &ldquo;my boiler&apos;s leaking&rdquo; matches &ldquo;Boiler repairs&rdquo;.
               </p>
+              <HelpButton chapter="services" />
             </div>
             <div className="field">
               <label htmlFor="services">Services, one per line</label>
@@ -351,6 +355,7 @@ export function SettingsForm({
       <aside className="sorting on-ink" aria-labelledby="flow-title">
         <h2 id="flow-title">What happens to each call</h2>
         <p>Using the stages chosen here. It changes as you pick.</p>
+        <HelpButton chapter="calls" label="Watch what happens to a call" />
         <CallFlow stages={names} warnings={warnings} />
         <p className="flow-note">
           Someone who rings again keeps the same opportunity. It only ever moves forward, and once {their} team moves it

@@ -77,6 +77,16 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
   - Depth comes from flat layers: the ink band, the first panel overlapping it, fields in the surface tone, and the ink call-sorting panel.
 - **Logo:** `src/components/brand.tsx` and `src/app/icon.svg` use the book's exact paths. Never round it, stretch it or put it in a pill.
 - **Voice:** "like a good foreman": short, certain, specific. The AI that reads calls is "Vantage AI".
+**Help video.** The walkthrough lives in `public/walkthrough/` (`vantage-walkthrough.mp4` and `poster.jpg`).
+- **Chapters:** start times and written steps are in `src/lib/walkthrough.ts`, measured from the video where each section label or caption changes.
+- **Where it shows:**
+  - `/help` is public and opens at a chapter with `?chapter=<id>`.
+  - `HelpButton` (`src/components/help-button.tsx`) opens it in a dialog at the chapter for that part of the page. It's on the connect page, Add a client, each settings step, the call panel and the refused-token warning, plus a Help button in the band.
+- **To replace the video:** re-encode the new export, then re-measure the chapter starts if the timeline changed:
+  `ffmpeg -i "Vantage Lead Qualifier Walkthrough.mp4" -c:v libx264 -preset slow -crf 28 -pix_fmt yuv420p -movflags +faststart -c:a aac -b:a 96k public/walkthrough/vantage-walkthrough.mp4`
+  `ffmpeg -ss 1 -i "Vantage Lead Qualifier Walkthrough.mp4" -frames:v 1 -q:v 3 public/walkthrough/poster.jpg`
+- **Don't:** autoplay it anywhere. It plays only when someone asks.
+
 - **The CRM is called Nexus Portal.** Clients use GoHighLevel under that white-label name.
   - Every word a person sees says Nexus Portal: page text, buttons, messages, contact notes, and errors that reach Signal.
   - Code, comments, API names and these docs keep saying GoHighLevel, the system underneath.

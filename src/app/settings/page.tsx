@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { HelpButton } from "@/components/help-button";
 import { Icon } from "@/components/icons";
 import { TopBand } from "@/components/top-band";
 import { readClient } from "@/lib/clients";
@@ -24,12 +25,15 @@ export default async function SettingsPage() {
           </>
         }
         actions={
-          <form action={signOutAction}>
-            <button type="submit" className="btn btn-quiet">
-              <Icon name="signOut" size={18} />
-              Sign out
-            </button>
-          </form>
+          <>
+            <HelpButton chapter="signal-number" label="Help" look="band" />
+            <form action={signOutAction}>
+              <button type="submit" className="btn btn-quiet">
+                <Icon name="signOut" size={18} />
+                Sign out
+              </button>
+            </form>
+          </>
         }
       />
       <main className="page">
