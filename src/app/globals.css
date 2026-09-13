@@ -1517,6 +1517,71 @@ label.check input {
   }
 }
 
+/* ---- agencies: the pitch film ---- */
+
+.pitch-video {
+  background: var(--ink);
+  border: 2px solid var(--ink);
+}
+
+.pitch-video video {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: var(--ink);
+}
+
+.pitch-points {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pitch-points li {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 28px;
+}
+
+.pitch-points li + li {
+  border-left: 2px solid var(--rule);
+}
+
+.pitch-points p {
+  color: var(--text-2);
+}
+
+.pitch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 20px 28px;
+  border-top: 2px solid var(--rule);
+}
+
+@media (max-width: 860px) {
+  .pitch-points {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pitch-points li + li {
+    border-left: 0;
+    border-top: 2px solid var(--rule);
+  }
+}
+
+@media (max-width: 640px) {
+  .pitch-points li,
+  .pitch-actions {
+    padding: 22px 20px;
+  }
+}
+
 .guide {
   margin: 0;
   padding: 0;

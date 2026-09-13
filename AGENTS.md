@@ -87,6 +87,12 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
   `ffmpeg -ss 1 -i "Vantage Lead Qualifier Walkthrough.mp4" -frames:v 1 -q:v 3 public/walkthrough/poster.jpg`
 - **Don't:** autoplay it anywhere. It plays only when someone asks.
 
+**Pitch video.** A sales film for agencies, not help. It lives in `public/pitch/`: `vantage-agency-pitch.mp4` (47 s, narrated) and `poster.jpg`. It's shown on the public `/agencies` page and linked from agency sign-in.
+- **Sources:** built from `Agency Pitch Ad.mp4` plus `ad-narration- improved.mp3`, both git-ignored. The narration already lands on each scene change, so it only needs silence added to reach the picture's length:
+  `ffmpeg -i "Agency Pitch Ad.mp4" -i "ad-narration- improved.mp3" -filter_complex "[1:a]apad[a]" -map 0:v:0 -map "[a]" -t 47 -c:v libx264 -preset slow -crf 28 -pix_fmt yuv420p -c:a aac -b:a 96k -ac 1 -movflags +faststart public/pitch/vantage-agency-pitch.mp4`
+- **Keep it out of help buttons and settings.** Someone who's stuck needs the walkthrough, not the pitch.
+- **The page's points must stay true to what the app does today.** The film itself also promises follow-up texts, call-backs and booking.
+
 - **The CRM is called Nexus Portal.** Clients use GoHighLevel under that white-label name.
   - Every word a person sees says Nexus Portal: page text, buttons, messages, contact notes, and errors that reach Signal.
   - Code, comments, API names and these docs keep saying GoHighLevel, the system underneath.
