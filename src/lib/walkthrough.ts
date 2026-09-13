@@ -10,7 +10,7 @@
 export const WALKTHROUGH_VIDEO = {
   src: "/walkthrough/vantage-walkthrough.mp4",
   poster: "/walkthrough/poster.jpg",
-  seconds: 110,
+  seconds: 117,
 } as const;
 
 export const CHAPTERS = [
