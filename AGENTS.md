@@ -10,7 +10,7 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Lead Qualifier
 
-Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app sorts the caller's opportunity in that client's GoHighLevel. Contract v1 lives in `src/lib/signal/contract.ts` and Signal's AGENTS.md ("Call webhook"). Change both together.
+Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app sorts the caller's opportunity in that client's GoHighLevel. Contract v1 lives in `src/lib/signal/contract.ts` and Signal's AGENTS.md ("Call webhook", "Call-backs"). Change both together. Fields added since v1 shipped (`callBackUrl`, `call.callBackOf`, `call.endReason`) are optional, so an older sender still parses.
 
 **No database, by Chao's design.**
 - Customers and opportunities live in GoHighLevel; calls live in Signal.
@@ -44,23 +44,37 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 
 `finish` runs in `after()` and never throws:
 1. `classifyCall`, then `planOpportunity`, then the update.
-2. A note ending `Ref: Signal call <id>`. That ref is the idempotency key: a resent call whose note exists is a duplicate.
+2. When the client has call-backs on, it may ask Signal to ring the caller back (below).
+3. A note ending `Ref: Signal call <id>`. That ref is the idempotency key: a resent call whose note exists is a duplicate.
+
+**Call-backs (`src/lib/qualify/call-back.ts`).** A per-client switch in settings (`callBacks` in the settings file; missing reads as off).
+- **When it asks:** an inbound call whose verdict is Qualification Required and whose opportunity ends in that stage. A hang-up asks with reason `hang_up` (decided by rule), anything else unclear with `unclear`. A Qualified or Lost caller, an opportunity already further along, or a call that couldn't be sorted never asks.
+- **How:** POST to the payload's `callBackUrl`, signed like the webhook with `SIGNAL_WEBHOOK_SECRET`. Signal owns the when (about 5 minutes after the call, in opening hours), the number (the line they rang), the re-checks (they rang again, someone called them, the account is paused) and the call itself: its AGENTS.md, "Call-backs". No `callBackUrl` means Signal can't ring back that line; the note says so.
+- **The voice is the client's choice, here** — they switch call-backs on in this app, so they pick the voice here too (`callBackVoiceId` in the settings file, sent with the request). This app holds no telephony keys, so the list comes from Signal: `listCallBackVoices` (`src/lib/qualify/voices.ts`) asks `SIGNAL_BASE_URL` + `/api/call-backs/voices` with the same signature, and the settings step shows the voices with a Play button, the client's own receptionist's voice marked and pushed to the bottom. "Choose for me" sends nothing and Signal picks. Signal refuses a voice that isn't on the account or that IS the receptionist's — the point is that the caller hears someone else. Unreachable Signal or no `SIGNAL_BASE_URL`: the picker is hidden and the automatic voice stands.
+- **The note** gets one line: when they'll be rung back, or Signal's reason for not ringing, or that Signal couldn't be reached and the team should ring them.
+- **The result** comes back as a `call.synced` that is outbound with `callBackOf` set. `acceptCall` sorts it like any call: the number check uses the line it rang from, and the contact is the number it rang. No answer, busy or voicemail (`call.endReason`) is decided by rule and leaves it where it is. A call-back never asks for another.
 
 **Deliberate rules.**
 - `settleVerdict` downgrades to Qualification Required when Lost lacks a reason or is low-confidence, or when Qualified doesn't match the services list.
 - Hang-ups are decided by rule, not the model.
 - `planOpportunity` only moves forward through the chosen stages. Any other stage belongs to the client's team, and a qualified opportunity is never marked Lost.
+- Outbound calls are ignored, except Signal's call-backs (`callBackOf` set).
 
 **Don't:**
 - add a database, or store call or customer data;
 - answer non-2xx for calls the app chooses to ignore (Signal retries for about 25h);
 - save a suggested services list without the client pressing Save;
 - let a settings action act on the location ID it's sent without `allowedClient`;
+- decide in this app when, from which number or whether Signal rings a caller back: send the call ID, the reason and the chosen voice, nothing else;
+- add a second place to choose the call-back voice (Signal's agent settings deliberately has none);
+- ask for a call-back for an outbound call, including a call-back's own result;
 - remove the `key` on the settings forms: a remount per client stops one client's typed settings being saved into another's;
 - read env at import time;
 - log tokens.
 
 **Checks:** `npm run verify` (no network), `npm run try:qualifier`, `npm run typecheck`, `npm run lint`.
+
+**Trying it by hand.** `npm run dev`, then `npm run send:test-call -- --location <sub-account>` posts a signed call to it and writes to that sub-account. For call-backs without a Signal to ring anyone: `npm run signal:fake` (stands in for Signal's endpoint, checks the signature, answers "scheduled"), then send `--scenario hang-up --call-back-url http://127.0.0.1:4599/api/call-backs`, and send the call-back's own result back with `--call-back-of <the call id it printed>` and `--end-reason voicemail_reached`.
 
 **Local dev:** `npm run dev` goes through `scripts/dev.mjs`, which raises Node's 16 KB request-header limit.
 - Why: browsers send every localhost cookie to every port, and other local apps' Supabase logins push server-action requests over the limit.

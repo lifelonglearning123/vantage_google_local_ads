@@ -26,6 +26,17 @@ export type ClientSettings = {
   pipelineId: string | null;
   stages: StageChoice;
   services: string[];
+  /**
+   * Ring back callers who hang up or aren't clear. Missing in files saved
+   * before call-backs existed, which reads as off.
+   */
+  callBacks?: boolean;
+  /**
+   * The voice the AI receptionist rings back in, chosen from the list Signal
+   * serves. Missing or null lets Signal choose one that isn't the voice the
+   * caller just heard.
+   */
+  callBackVoiceId?: string | null;
   connectedAt: string;
   updatedAt: string;
 };

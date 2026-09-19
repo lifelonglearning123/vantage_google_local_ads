@@ -15,6 +15,19 @@ export type ClassifyInput = {
   summary: string | null;
   /** Signal's own lead-screening label for the call, when screening is on. A hint only. */
   screeningOutcome: string | null;
+  /** How the call ended, in the platform's words. Decides unanswered call-backs by rule. */
+  endReason?: string | null;
+  /** The business ringing the caller back after an earlier call. */
+  callBack?: boolean;
+};
+
+/** Ways a call-back ends without anyone to talk to, and what the note says. */
+const UNANSWERED: Record<string, string> = {
+  dial_no_answer: "They didn't answer the call-back.",
+  dial_busy: "Their line was busy.",
+  dial_failed: "The call-back didn't connect.",
+  invalid_destination: "Their number couldn't be reached.",
+  voicemail_reached: "The call-back reached their voicemail, and a message was left.",
 };
 
 /** What the model returns, before `settleVerdict` applies the guards. */
@@ -39,6 +52,19 @@ const MAX_TRANSCRIPT_CHARS = 16_000;
  * looks at — never away from it.
  */
 export async function classifyCall(input: ClassifyInput): Promise<Classification> {
+  const unanswered = input.endReason ? UNANSWERED[input.endReason] : undefined;
+  if (unanswered) {
+    return {
+      outcome: "qualification_required",
+      lostReason: null,
+      serviceRequested: null,
+      matchedService: null,
+      callerName: null,
+      confidence: "high",
+      reasoning: unanswered,
+      decidedBy: "rule",
+    };
+  }
   if (nothingFromCaller(input)) {
     return {
       outcome: "qualification_required",
@@ -139,6 +165,11 @@ export function buildInstructions(input: ClassifyInput): string {
     "You sort phone calls to a trades business into its sales pipeline.",
     "",
     `Business: ${input.businessName}`,
+    ...(input.callBack
+      ? [
+          "This call is the business ringing the caller back, after an earlier call that ended before it was clear what they wanted. Judge what they want from this call.",
+        ]
+      : []),
     "Services this business supplies:",
     services.length ? services.map((s) => `- ${s}`).join("\n") : "- (none listed)",
     "",

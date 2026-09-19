@@ -84,6 +84,9 @@ export async function saveSettingsAction(target: SettingsTarget, formData: FormD
     pipelineId: pipeline.id,
     stages: { ...chosen, lost: chosen.lost || null },
     services,
+    callBacks: formData.get("callBacks") === "on",
+    // Empty = let Signal choose. Anything else is a voice id it served us.
+    callBackVoiceId: String(formData.get("callBackVoiceId") ?? "").trim().slice(0, 200) || null,
     updatedAt: new Date().toISOString(),
   });
   refresh();

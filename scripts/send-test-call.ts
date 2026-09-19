@@ -9,6 +9,13 @@ import { SAMPLE_CALLS } from "./sample-calls";
  *     [--url http://localhost:3000/api/webhooks/signal]
  *   npm run send:test-call -- --ping
  *
+ * Call-backs (Signal AGENTS.md, "Call-backs"), against `npm run signal:fake`:
+ *
+ *   ...--scenario hang-up --call-back-url http://127.0.0.1:4599/api/call-backs
+ *     the app asks for a call-back, and the note says when they'll be rung
+ *   ...--call-back-of <the call id printed above> [--end-reason voicemail_reached]
+ *     the call-back's own result, sorted like any call
+ *
  * This DOES write to that sub-account: an opportunity and a note. Without
  * --contact the contact is found, or created, from --from.
  */
@@ -37,6 +44,11 @@ async function main() {
     const sample = SAMPLE_CALLS[scenario];
     if (!sample) throw new Error(`Unknown --scenario. Try: ${Object.keys(SAMPLE_CALLS).join(", ")}`);
     const signalLine = arg("to") ?? "+441223912555";
+    const customer = arg("from") ?? "+447700900123";
+    // A call-back is Signal ringing the caller back: outbound, from the line
+    // they rang. `--call-back-of` names the call it returns.
+    const callBackOf = arg("call-back-of");
+    const outbound = flag("outbound") || !!callBackOf;
     event = {
       event: "call.synced",
       version: 1,
@@ -48,20 +60,24 @@ async function main() {
         id: crypto.randomUUID(),
         platform: "retell",
         platformCallId: `test_${Date.now()}`,
-        direction: flag("outbound") ? "outbound" : "inbound",
+        direction: outbound ? "outbound" : "inbound",
         startedAt: sentAt,
         durationSec: 64,
-        fromNumber: arg("from") ?? "+447700900123",
-        toNumber: signalLine,
+        fromNumber: outbound ? signalLine : customer,
+        toNumber: outbound ? customer : signalLine,
         agentPhoneNumber: signalLine,
         callerName: null,
         summary: sample.summary,
         transcript: sample.transcript,
         leadScreening: null,
         bookedAppointmentId: null,
+        endReason: arg("end-reason") ?? null,
+        callBackOf: callBackOf ? { callId: callBackOf, reason: arg("reason") ?? "hang_up" } : null,
       },
       ghl: { locationId, contactId: arg("contact") ?? null },
+      callBackUrl: arg("call-back-url") ?? null,
     };
+    console.log(`call id ${(event.call as { id: string }).id}`);
   }
 
   const raw = JSON.stringify(event);

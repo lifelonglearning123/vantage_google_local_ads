@@ -7,7 +7,9 @@ import { connectClient } from "@/lib/connect";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import type { Pipeline } from "@/lib/ghl";
 import { normalizePhone, parsePhoneList } from "@/lib/phone";
-import { findService, nothingFromCaller, settleVerdict, type ModelVerdict } from "@/lib/qualify/classify";
+import { callBackDecision, callBackNoteLine, callBackWhen } from "@/lib/qualify/call-back";
+import { sortVoices, voiceLabel } from "@/lib/qualify/voices";
+import { classifyCall, findService, nothingFromCaller, settleVerdict, type ModelVerdict } from "@/lib/qualify/classify";
 import { callIsOnNumbers, resolveConfig } from "@/lib/qualify/config";
 import { planOpportunity, type OpportunityPlan, type StageIds } from "@/lib/qualify/decide";
 import { htmlToText } from "@/lib/qualify/draft-services";
@@ -29,6 +31,7 @@ import {
   type CallSyncedEvent,
 } from "@/lib/signal/contract";
 import { FAKE_LOCATION, FAKE_TOKEN, startFakeGhl } from "./fake-ghl";
+import { startFakeSignal } from "./fake-signal";
 
 /**
  * Everything that doesn't need a real GoHighLevel, OpenAI or Blob store: the
@@ -78,6 +81,16 @@ async function main() {
 
   section("Contract v1");
   check("call.synced parses", signalEventSchema.safeParse(makeEvent({})).success);
+  const withCallBack = signalEventSchema.safeParse(
+    makeEvent({ direction: "outbound", callBackOf: { callId: "call-0", reason: "hang_up" }, endReason: "user_hangup", callBackUrl: "https://signal.example/api/call-backs" }),
+  );
+  check(
+    "call-back fields parse (callBackUrl, callBackOf, endReason)",
+    withCallBack.success &&
+      withCallBack.data.event === "call.synced" &&
+      withCallBack.data.call.callBackOf?.callId === "call-0" &&
+      withCallBack.data.callBackUrl === "https://signal.example/api/call-backs",
+  );
   check(
     "ping parses",
     signalEventSchema.safeParse({
@@ -180,8 +193,17 @@ async function main() {
   const lostGone = resolveConfig({ ...chosen, stages: { ...chosen.stages, lost: "st-gone" } }, [sales]);
   check("a deleted optional Lost stage isn't a problem", lostGone.problems.length === 0 && lostGone.stages.lost === null);
   check("no services → not live", resolveConfig({ ...chosen, services: [] }, [sales]).problems.some((p) => p.includes("services")));
-  check("a chosen number matches however it's written", callIsOnNumbers(["+441223912555"], { toNumber: "01223 912555", agentPhoneNumber: null }));
-  check("other numbers don't match", !callIsOnNumbers(["+441223912555"], { toNumber: "+441223000000", agentPhoneNumber: "+441223000000" }));
+  const inbound = { direction: "inbound" as const, fromNumber: "+447700900123" };
+  check("a chosen number matches however it's written", callIsOnNumbers(["+441223912555"], { ...inbound, toNumber: "01223 912555", agentPhoneNumber: null }));
+  check("other numbers don't match", !callIsOnNumbers(["+441223912555"], { ...inbound, toNumber: "+441223000000", agentPhoneNumber: "+441223000000" }));
+  check(
+    "a call-back matches on the number it rang from",
+    callIsOnNumbers(["+441223912555"], { direction: "outbound", fromNumber: "+441223912555", toNumber: "+447700900123", agentPhoneNumber: null }),
+  );
+  check(
+    "a call-back isn't matched on the customer's number",
+    !callIsOnNumbers(["+447700900123"], { direction: "outbound", fromNumber: "+441223912555", toNumber: "+447700900123", agentPhoneNumber: null }),
+  );
   check(
     "stages pre-selected by name",
     guessStage(sales.stages, "qualificationRequired") === "st-qr" && guessStage(sales.stages, "qualified") === "st-q" && guessStage(sales.stages, "lost") === "st-lost",
@@ -192,6 +214,83 @@ async function main() {
   );
   check("one-line services without semicolons split on commas", parseServices("Boiler repairs, Blocked drains").length === 2);
   check("bullets stripped, duplicates dropped", parseServices("- Boiler repairs\n• Drains\nDrains").join("|") === "Boiler repairs|Drains");
+
+  section("Call-backs (rules)");
+  const qr = (decidedBy = "stand-in"): Classification => ({
+    outcome: "qualification_required",
+    lostReason: null,
+    serviceRequested: null,
+    matchedService: null,
+    callerName: null,
+    confidence: "high",
+    reasoning: "test",
+    decidedBy,
+  });
+  const askFor = (over: Partial<Parameters<typeof callBackDecision>[0]> = {}, event = makeEvent({ callBackUrl: "https://signal.example/api/call-backs" })) =>
+    callBackDecision({
+      enabled: true,
+      event,
+      verdict: qr(),
+      sorted: true,
+      finalStageId: "st-qr",
+      qualificationRequiredStageId: "st-qr",
+      ...over,
+    });
+  const hangUp = askFor({ verdict: qr("rule") });
+  check("hang-up decided by rule → ask, reason hang_up", hangUp.ask && hangUp.reason === "hang_up", hangUp);
+  const unclear = askFor();
+  check("unclear call → ask, reason unclear", unclear.ask && unclear.reason === "unclear", unclear);
+  const off = askFor({ enabled: false });
+  check("call-backs off → nothing, and nothing said", !off.ask && off.why === null);
+  check("qualified caller → no call-back", !askFor({ verdict: { ...qr(), outcome: "qualified" } }).ask);
+  check("lost caller → no call-back", !askFor({ verdict: { ...qr(), outcome: "lost" } }).ask);
+  check("couldn't be sorted → no call-back", !askFor({ sorted: false }).ask);
+  const further = askFor({ finalStageId: "st-q" });
+  check("opportunity already further along → no call-back, and says why", !further.ask && !!further.why, further);
+  const withheld = askFor({}, makeEvent({ callBackUrl: "https://signal.example/api/call-backs", withheld: true }));
+  check("withheld number → says so", !withheld.ask && /withheld/.test(withheld.why ?? ""), withheld);
+  const noUrl = askFor({}, makeEvent({}));
+  check("Signal offered no call-back → says so", !noUrl.ask && !!noUrl.why, noUrl);
+  const ofCallBack = askFor({}, makeEvent({ direction: "outbound", callBackOf: { callId: "call-0", reason: "hang_up" }, callBackUrl: "https://signal.example/api/call-backs" }));
+  check("a call-back's own result never asks for another", !ofCallBack.ask && ofCallBack.why === null);
+  const now = new Date("2026-09-15T10:00:00Z");
+  check("due soon → in about N minutes", callBackWhen(new Date(now.getTime() + 5 * 60_000), now, "Europe/London") === "in about 5 minutes");
+  check("due tomorrow → local time tomorrow", callBackWhen(new Date("2026-09-16T08:00:00Z"), now, "Europe/London") === "at 09:00 tomorrow");
+  check("due later in the week → names the day", callBackWhen(new Date("2026-09-19T08:00:00Z"), now, "Europe/London") === "at 09:00 on Saturday");
+  check(
+    "note line for a scheduled call-back",
+    callBackNoteLine({ kind: "scheduled", dueAt: new Date(now.getTime() + 5 * 60_000), timezone: "Europe/London" }, now) ===
+      "Call-back: the AI receptionist will ring them back in about 5 minutes.",
+  );
+  check("note line for a refusal carries Signal's reason", callBackNoteLine({ kind: "refused", reason: "They rang again first." }, now) === "Call-back: not made. They rang again first.");
+  const voiceList = {
+    voices: [
+      { id: "v-rec", name: "Rachel", gender: "female", accent: "British", provider: "elevenlabs", previewUrl: "https://x/1" },
+      { id: "v-m1", name: "Adam", gender: "male", accent: "British", provider: "elevenlabs", previewUrl: "https://x/2" },
+      { id: "v-f1", name: "Alice", gender: "female", accent: "British", provider: "elevenlabs", previewUrl: null },
+      { id: "v-m2", name: "Brian", gender: "male", accent: "American", provider: "elevenlabs", previewUrl: null },
+    ],
+    receptionistVoiceIds: ["v-rec"],
+    automatic: "v-m1",
+  };
+  const ordered = sortVoices(voiceList).map((v) => v.id);
+  check("voices: men first, the receptionist's own voice last", ordered.join() === "v-m1,v-m2,v-f1,v-rec", ordered);
+  check("a voice reads as name, gender and accent", voiceLabel(voiceList.voices[1]) === "Adam · male · British");
+
+  const voicemail = await classifyCall({
+    businessName: "Hartley",
+    services: ["Boiler repairs"],
+    transcript: "User: Hi, you've reached Dave, leave a message.",
+    summary: null,
+    screeningOutcome: null,
+    endReason: "voicemail_reached",
+    callBack: true,
+  });
+  check(
+    "call-back that reached voicemail: decided by rule, not the model",
+    voicemail.outcome === "qualification_required" && voicemail.decidedBy === "rule" && /voicemail/.test(voicemail.reasoning),
+    voicemail,
+  );
 
   section("Website text (for suggesting services)");
   const page =
@@ -438,6 +537,115 @@ async function main() {
   for (const r of [x, y]) if (r.kind === "accepted") await r.finish();
   check("same call twice at once: one opportunity, one note", oppsOf("c-twin").length === 1 && notesOf("c-twin").length === 1);
 
+  section("Call-backs (fake Signal)");
+  const secretForSignal = `whsec-${"t".repeat(24)}`;
+  const signal = await startFakeSignal({ secret: secretForSignal });
+  process.env.SIGNAL_WEBHOOK_SECRET = secretForSignal;
+  await saveClient(makeSettings({ callBacks: true }));
+  const lastLine = (contactId: string) => notesOf(contactId).at(-1)?.body ?? "";
+
+  await saveClient(makeSettings({ callBacks: true, callBackVoiceId: "v-m1" }));
+  const hangUpCall = makeEvent({ contactId: "c-hangup", callBackUrl: signal.url });
+  await run(hangUpCall, verdict("qualification_required", { decidedBy: "rule" }));
+  check("hang-up: in Qualification Required", oppsOf("c-hangup")[0]?.pipelineStageId === "st-qr");
+  check(
+    "hang-up: Signal asked once, signed, for this call, reason hang_up",
+    signal.requests.length === 1 &&
+      signal.requests[0].signed &&
+      signal.requests[0].callId === hangUpCall.call.id &&
+      signal.requests[0].reason === "hang_up",
+    signal.requests,
+  );
+  check(
+    "the client's chosen voice goes with the request",
+    signal.requests[0].voiceId === "v-m1",
+    signal.requests[0],
+  );
+  await saveClient(makeSettings({ callBacks: true }));
+  await run(makeEvent({ contactId: "c-novoice", callBackUrl: signal.url }), verdict("qualification_required"));
+  check(
+    "no voice chosen: Signal is left to choose",
+    signal.requests.at(-1)?.voiceId === null,
+    signal.requests.at(-1),
+  );
+  check(
+    "hang-up: the note says when they'll be rung back",
+    lastLine("c-hangup").includes("Call-back: the AI receptionist will ring them back in about 5 minutes."),
+    lastLine("c-hangup"),
+  );
+
+  await run(makeEvent({ contactId: "c-unclear", callBackUrl: signal.url }), verdict("qualification_required"));
+  check("unclear call: asked with reason unclear", signal.requests.at(-1)?.reason === "unclear", signal.requests.at(-1));
+
+  const asked = signal.requests.length;
+  await run(makeEvent({ contactId: "c-wants", callBackUrl: signal.url }), verdict("qualified"));
+  check("qualified caller: Signal not asked", signal.requests.length === asked);
+  await run(makeEvent({ contactId: "c-dave", callBackUrl: signal.url }), verdict("qualification_required"));
+  check(
+    "already qualified, rang again unclear: not asked, note says why",
+    signal.requests.length === asked && lastLine("c-dave").includes("Call-back: not made. The opportunity is already further along"),
+    lastLine("c-dave"),
+  );
+
+  signal.refuseNext = "They were already rung back in the last 24 hours.";
+  await run(makeEvent({ contactId: "c-refused", callBackUrl: signal.url }), verdict("qualification_required"));
+  check(
+    "Signal refuses: its reason goes in the note",
+    lastLine("c-refused").includes("Call-back: not made. They were already rung back in the last 24 hours."),
+    lastLine("c-refused"),
+  );
+
+  await run(makeEvent({ contactId: "c-down", callBackUrl: "http://127.0.0.1:9/api/call-backs" }), verdict("qualification_required"));
+  check(
+    "Signal unreachable: still sorted, note says to ring them yourselves",
+    oppsOf("c-down")[0]?.pipelineStageId === "st-qr" && lastLine("c-down").includes("Ring them back yourselves"),
+    lastLine("c-down"),
+  );
+
+  const back = makeEvent({
+    direction: "outbound",
+    to: hangUpCall.call.fromNumber ?? undefined,
+    contactId: "c-hangup",
+    callBackOf: { callId: hangUpCall.call.id, reason: "hang_up" },
+  });
+  const backRun = await run(back, verdict("qualified"));
+  check("call-back result: accepted, same opportunity", backRun.accepted.kind === "accepted" && !backRun.accepted.created && oppsOf("c-hangup").length === 1, backRun.accepted);
+  check("call-back result: moved to Qualified", oppsOf("c-hangup")[0]?.pipelineStageId === "st-q", oppsOf("c-hangup")[0]);
+  check(
+    "call-back result: the note says it was a call-back, and asks for no other",
+    lastLine("c-hangup").startsWith("The AI receptionist rang them back") && !lastLine("c-hangup").includes("Call-back:"),
+    lastLine("c-hangup"),
+  );
+
+  const beforeVoicemail = signal.requests.length;
+  const unansweredEvent = makeEvent({
+    direction: "outbound",
+    contactId: "c-unclear",
+    callBackOf: { callId: "call-earlier", reason: "unclear" },
+    endReason: "voicemail_reached",
+    transcript: "User: Hi, you've reached Sam. Leave a message.",
+  });
+  const unanswered = await acceptCall(unansweredEvent);
+  const unansweredDone = unanswered.kind === "accepted" ? await unanswered.finish() : null;
+  check(
+    "call-back to voicemail: left in Qualification Required, no model, no new call-back",
+    oppsOf("c-unclear")[0]?.pipelineStageId === "st-qr" &&
+      unansweredDone?.action === "left" &&
+      lastLine("c-unclear").includes("reached their voicemail") &&
+      signal.requests.length === beforeVoicemail,
+    { done: unansweredDone, note: lastLine("c-unclear") },
+  );
+  const offLine = await acceptCall(
+    makeEvent({ direction: "outbound", from: "+441223000000", contactId: "c-hangup", callBackOf: { callId: "x", reason: "hang_up" } }),
+  );
+  check("call-back from a number the client didn't choose: ignored", offLine.kind === "ignored", offLine);
+
+  await saveClient(makeSettings({ callBacks: false }));
+  const beforeOff = signal.requests.length;
+  await run(makeEvent({ contactId: "c-off", callBackUrl: signal.url }), verdict("qualification_required"));
+  check("call-backs off: Signal not asked, no call-back line", signal.requests.length === beforeOff && !lastLine("c-off").includes("Call-back"), lastLine("c-off"));
+  signal.close();
+
   await deleteClient(FAKE_LOCATION);
   check("after disconnecting, calls are ignored", (await acceptCall(makeEvent({ contactId: "c-after" }))).kind === "ignored");
   ghl.close();
@@ -470,12 +678,22 @@ function makeEvent(over: {
   direction?: "inbound" | "outbound";
   from?: string;
   to?: string;
+  withheld?: boolean;
   contactId?: string | null;
   locationId?: string;
+  callBackUrl?: string;
+  callBackOf?: { callId: string; reason: string };
+  endReason?: string;
+  transcript?: string;
 }): CallSyncedEvent {
   seq++;
   const now = new Date().toISOString();
-  const line = over.to ?? "+441223912555";
+  const direction = over.direction ?? "inbound";
+  // The client's line is the number rung for a call in, the number rung from for a call-back.
+  const line = (direction === "inbound" ? over.to : over.from) ?? "+441223912555";
+  const customer = over.withheld
+    ? null
+    : ((direction === "inbound" ? over.from : over.to) ?? `+4477009${String(seq).padStart(5, "0")}`);
   return {
     event: "call.synced",
     version: 1,
@@ -487,22 +705,25 @@ function makeEvent(over: {
       id: `call-${seq}-${Date.now()}`,
       platform: "retell",
       platformCallId: `rc_${seq}`,
-      direction: over.direction ?? "inbound",
+      direction,
       startedAt: now,
       durationSec: 58,
-      fromNumber: over.from ?? `+4477009${String(seq).padStart(5, "0")}`,
-      toNumber: line,
+      fromNumber: direction === "inbound" ? customer : line,
+      toNumber: direction === "inbound" ? line : customer,
       agentPhoneNumber: line,
       callerName: null,
       summary: "A test call.",
-      transcript: "Agent: Hello\nUser: My boiler is leaking",
+      transcript: over.transcript ?? "Agent: Hello\nUser: My boiler is leaking",
       leadScreening: { outcome: "qualified", qualified: true },
       bookedAppointmentId: null,
+      endReason: over.endReason ?? null,
+      callBackOf: over.callBackOf ?? null,
     },
     ghl: {
       locationId: over.locationId ?? FAKE_LOCATION,
       contactId: over.contactId === undefined ? `contact-${seq}` : over.contactId,
     },
+    callBackUrl: over.callBackUrl ?? null,
   };
 }
 
