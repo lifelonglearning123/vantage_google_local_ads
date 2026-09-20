@@ -81,12 +81,21 @@ const callSynced = z.object({
       .object({ outcome: z.string().nullish(), qualified: z.boolean().nullish() })
       .nullish(),
     bookedAppointmentId: z.string().nullish(),
+    /** How the call ended, in the platform's words ("user_hangup", "dial_no_answer", "voicemail_reached"…). */
+    endReason: z.string().nullish(),
+    /** Set when this call is Signal ringing someone back: the call it returns, and why. */
+    callBackOf: z.object({ callId: z.string(), reason: z.string() }).nullish(),
   }),
   // Signal always sends both. Optional here so a hand-made test event can
   // leave them out and let the app find or create the contact by phone.
   ghl: z
     .object({ locationId: z.string().nullish(), contactId: z.string().nullish() })
     .nullish(),
+  /**
+   * Where to ask Signal to ring this caller back. Only on calls Signal can
+   * return (inbound, on a line whose AI can call out, number not withheld).
+   */
+  callBackUrl: z.string().nullish(),
 });
 
 const ping = z.object({
@@ -100,3 +109,60 @@ const ping = z.object({
 export const signalEventSchema = z.discriminatedUnion("event", [callSynced, ping]);
 export type SignalEvent = z.infer<typeof signalEventSchema>;
 export type CallSyncedEvent = z.infer<typeof callSynced>;
+
+/**
+ * The other direction: asking Signal to ring a caller back (Signal AGENTS.md
+ * "Call-backs"). POSTed to the payload's `callBackUrl`, signed exactly like
+ * the webhook, with the same secret. It names the call and why; Signal
+ * decides when, from which number, and whether at all.
+ */
+export const CALL_BACK_EVENT = "call_back.requested";
+export const CALL_BACK_VOICES_EVENT = "call_back.voices";
+export type CallBackReason = "hang_up" | "unclear";
+
+export function callBackRequestBody(
+  callId: string,
+  reason: CallBackReason,
+  /** The voice this client chose on the settings page; null lets Signal choose. */
+  voiceId: string | null,
+): string {
+  return JSON.stringify({ event: CALL_BACK_EVENT, version: 1, callId, reason, voiceId });
+}
+
+/** Asking Signal which voices this sub-account's call-backs may use. */
+export function callBackVoicesBody(locationId: string): string {
+  return JSON.stringify({ event: CALL_BACK_VOICES_EVENT, version: 1, locationId });
+}
+
+const callBackVoice = z.object({
+  id: z.string(),
+  name: z.string().nullish(),
+  gender: z.string().nullish(),
+  accent: z.string().nullish(),
+  provider: z.string().nullish(),
+  previewUrl: z.string().nullish(),
+});
+export type CallBackVoice = z.infer<typeof callBackVoice>;
+
+export const callBackVoicesSchema = z.object({
+  ok: z.boolean(),
+  voices: z.array(callBackVoice).nullish(),
+  /** The voices this client's own receptionists speak in. */
+  receptionistVoiceIds: z.array(z.string()).nullish(),
+  automatic: z.string().nullish(),
+  error: z.string().nullish(),
+});
+
+/** Signal's answer: 202 scheduled, 200 asked before (the first answer), 422 refused. */
+export const callBackAnswerSchema = z.object({
+  ok: z.boolean(),
+  status: z.string().nullish(),
+  dueAt: z.string().nullish(),
+  timezone: z.string().nullish(),
+  /** Why an earlier request for this call was closed without ringing. */
+  note: z.string().nullish(),
+  /** Why Signal won't ring back, in words for the contact's note. */
+  reason: z.string().nullish(),
+  error: z.string().nullish(),
+});
+export type CallBackAnswer = z.infer<typeof callBackAnswerSchema>;

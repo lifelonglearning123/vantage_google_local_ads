@@ -798,6 +798,14 @@ label.check input {
   font-size: 14px;
 }
 
+.lane-then {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--n200);
+  font-size: 14px;
+}
+
 .flow-warning {
   display: flex;
   align-items: flex-start;

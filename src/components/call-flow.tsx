@@ -31,9 +31,12 @@ function Warning({ text }: { text?: string | null }) {
 export function CallFlow({
   stages,
   warnings = {},
+  callBacks = false,
 }: {
   stages: FlowStages;
   warnings?: Partial<Record<StageKind, string | null>>;
+  /** The AI receptionist rings these callers back. */
+  callBacks?: boolean;
 }) {
   return (
     <ol className="flow">
@@ -57,6 +60,12 @@ export function CallFlow({
           <li className="lane lane-contacted">
             <span className="lane-when">{STAGE_WHEN.qualificationRequired}</span>
             <Chip name={stages.qualificationRequired} />
+            {callBacks ? (
+              <span className="lane-then">
+                <Icon name="phone" size={16} />
+                The AI receptionist rings them back
+              </span>
+            ) : null}
           </li>
           <li className="lane lane-lost">
             <span className="lane-when">{STAGE_WHEN.lost}</span>

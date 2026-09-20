@@ -10,6 +10,7 @@ import {
   type Opportunity,
 } from "@/lib/ghl";
 import type { CallSyncedEvent } from "@/lib/signal/contract";
+import { callBackDecision, callBackNoteLine, requestCallBack } from "./call-back";
 import { classifyCall } from "./classify";
 import { callIsOnNumbers, loadLiveConfig, type LiveConfig } from "./config";
 import { planOpportunity } from "./decide";
@@ -37,6 +38,8 @@ export type FinishResult = {
   action: "moved" | "left" | "not_qualified";
   stage: string;
   detail: string;
+  /** The contact note's call-back line, when there is one to write. */
+  callBack?: string | null;
 };
 
 export type AcceptResult =
@@ -57,7 +60,9 @@ export const noteRef = (callId: string) => `Signal call ${callId}`;
 
 export async function acceptCall(event: CallSyncedEvent, deps: ProcessDeps = {}): Promise<AcceptResult> {
   const { call } = event;
-  if (call.direction !== "inbound") {
+  // Outbound calls are the team's, except a call-back: Signal ringing a caller
+  // back for this app, whose result is sorted like the call it returns.
+  if (call.direction !== "inbound" && !call.callBackOf) {
     return { kind: "ignored", reason: "outbound calls are updated by the salesperson" };
   }
   const locationId = event.ghl?.locationId;
@@ -75,10 +80,11 @@ export async function acceptCall(event: CallSyncedEvent, deps: ProcessDeps = {})
 
     const config = await loadLiveConfig(settings);
     const { token } = config;
+    const customerPhone = customerNumber(call);
     let contactId = event.ghl?.contactId ?? null;
     if (!contactId) {
-      if (!call.fromNumber) throw new Error("No contact from Signal, and no caller number to find one by.");
-      contactId = await findOrCreateContact(token, { locationId, phone: call.fromNumber, name: call.callerName ?? null });
+      if (!customerPhone) throw new Error("No contact from Signal, and no caller number to find one by.");
+      contactId = await findOrCreateContact(token, { locationId, phone: customerPhone, name: call.callerName ?? null });
     }
     const notes = await listContactNotes(token, contactId);
     if (notes.some((n) => n.body.includes(noteRef(call.id)))) {
@@ -99,7 +105,7 @@ export async function acceptCall(event: CallSyncedEvent, deps: ProcessDeps = {})
           pipelineId,
           pipelineStageId: config.stages.newLeads,
           contactId,
-          name: opportunityName(call.callerName ?? null, call.fromNumber ?? null, null),
+          name: opportunityName(call.callerName ?? null, customerPhone, null),
           source: "Signal call",
         });
       } catch (e) {
@@ -143,6 +149,7 @@ async function finishCall(
   const { newLeads, qualificationRequired, qualified, lost } = config.stages;
 
   let verdict: Classification | null = null;
+  let finalStageId = opportunity.pipelineStageId;
   let result: FinishResult;
   try {
     if (!newLeads || !qualificationRequired || !qualified) throw new Error(config.problems.join(" "));
@@ -152,6 +159,8 @@ async function finishCall(
       transcript: call.transcript ?? null,
       summary: call.summary ?? null,
       screeningOutcome: call.leadScreening?.outcome ?? null,
+      endReason: call.endReason ?? null,
+      callBack: !!call.callBackOf,
     });
     const plan = planOpportunity(verdict.outcome, opportunity.pipelineStageId, {
       newLeads,
@@ -166,8 +175,9 @@ async function finishCall(
         pipelineId: opportunity.pipelineId,
         pipelineStageId: plan.stageId,
         status: plan.status,
-        ...(rename ? { name: opportunityName(call.callerName ?? verdict.callerName, call.fromNumber ?? null, verdict) } : {}),
+        ...(rename ? { name: opportunityName(call.callerName ?? verdict.callerName, customerNumber(call), verdict) } : {}),
       });
+      finalStageId = plan.stageId;
       result = { outcome: verdict.outcome, action: "moved", stage: stageName(plan.stageId), detail: "" };
     } else {
       result = {
@@ -188,12 +198,21 @@ async function finishCall(
     };
   }
 
+  result.callBack = await askForCallBack(
+    event,
+    { enabled: settings.callBacks === true, voiceId: settings.callBackVoiceId ?? null },
+    verdict,
+    result,
+    finalStageId,
+    qualificationRequired,
+  );
+
   const warnings =
     settings.services.length === 0
       ? ["No services have been added in the app yet, so no caller can be Qualified."]
       : [];
   try {
-    await addContactNote(token, contactId, buildNote(verdict, result, warnings, call.id));
+    await addContactNote(token, contactId, buildNote(verdict, result, warnings, call.id, !!call.callBackOf));
   } catch (e) {
     console.error("[qualify] note not added", {
       callId: call.id,
@@ -201,6 +220,43 @@ async function finishCall(
     });
   }
   return result;
+}
+
+/** The customer's number: who rang in, or who a call-back rang. */
+function customerNumber(call: CallSyncedEvent["call"]): string | null {
+  return (call.direction === "inbound" ? call.fromNumber : call.toNumber) ?? null;
+}
+
+/**
+ * Asks Signal to ring the caller back when the client wants call-backs and
+ * this call left the opportunity in Qualification Required. Returns the note's
+ * call-back line, or null. Never throws.
+ */
+async function askForCallBack(
+  event: CallSyncedEvent,
+  callBacks: { enabled: boolean; voiceId: string | null },
+  verdict: Classification | null,
+  result: FinishResult,
+  finalStageId: string,
+  qualificationRequiredStageId: string | null,
+): Promise<string | null> {
+  const decision = callBackDecision({
+    enabled: callBacks.enabled,
+    event,
+    verdict,
+    sorted: result.action !== "not_qualified",
+    finalStageId,
+    qualificationRequiredStageId,
+  });
+  if (!decision.ask) return decision.why ? `Call-back: not made. ${decision.why}` : null;
+  const secret = process.env.SIGNAL_WEBHOOK_SECRET;
+  const outcome = secret
+    ? await requestCallBack(event.callBackUrl ?? "", secret, event.call.id, decision.reason, callBacks.voiceId)
+    : ({ kind: "failed", reason: "SIGNAL_WEBHOOK_SECRET is not set" } as const);
+  if (outcome.kind === "failed") {
+    console.error("[qualify] call-back not requested", { callId: event.call.id, error: outcome.reason });
+  }
+  return callBackNoteLine(outcome, new Date());
 }
 
 export function opportunityName(
@@ -221,8 +277,10 @@ export function buildNote(
   r: FinishResult,
   warnings: string[],
   callId: string,
+  isCallBack = false,
 ): string {
   const lines: string[] = [];
+  if (isCallBack) lines.push("The AI receptionist rang them back after their earlier call.");
   if (v) {
     lines.push(
       `Call qualification: ${OUTCOME_LABELS[v.outcome]}${v.lostReason ? ` (${LOST_REASON_LABELS[v.lostReason]})` : ""}`,
@@ -241,6 +299,7 @@ export function buildNote(
   } else {
     lines.push(`Opportunity: left in ${r.stage}. It couldn't be sorted automatically: ${r.detail}`);
   }
+  if (r.callBack) lines.push(r.callBack);
   lines.push(...warnings, "", `Ref: ${noteRef(callId)}`);
   return lines.join("\n");
 }

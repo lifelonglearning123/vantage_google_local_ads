@@ -10,7 +10,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "verify": "tsx scripts/verify.ts",
     "try:qualifier": "tsx --env-file=.env.local scripts/try-qualifier.ts",
-    "send:test-call": "tsx --env-file=.env.local scripts/send-test-call.ts"
+    "send:test-call": "tsx --env-file=.env.local scripts/send-test-call.ts",
+    "signal:fake": "tsx --env-file=.env.local scripts/fake-signal.ts"
   },
   "dependencies": {
     "@fontsource-variable/archivo": "^5.3.0",

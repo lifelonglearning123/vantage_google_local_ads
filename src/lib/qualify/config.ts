@@ -86,12 +86,17 @@ export function resolveConfig(
   return { pipeline, stages, problems: issues.map((i) => i.text), issues };
 }
 
-/** Whether a call came in on one of the client's chosen numbers, however either side writes it. */
+/**
+ * Whether a call is on one of the client's chosen numbers, however either side
+ * writes it: the number rung for a call in, the number rung from for a
+ * call-back going out.
+ */
 export function callIsOnNumbers(
   numbers: string[],
-  call: Pick<CallSyncedEvent["call"], "toNumber" | "agentPhoneNumber">,
+  call: Pick<CallSyncedEvent["call"], "direction" | "fromNumber" | "toNumber" | "agentPhoneNumber">,
 ): boolean {
-  return [call.toNumber, call.agentPhoneNumber]
+  const line = call.direction === "outbound" ? call.fromNumber : call.toNumber;
+  return [line, call.agentPhoneNumber]
     .map(normalizePhone)
     .some((n) => !!n && numbers.includes(n));
 }

@@ -3,6 +3,7 @@ import { Icon } from "@/components/icons";
 import type { ClientSettings } from "@/lib/clients";
 import { formatPhone } from "@/lib/phone";
 import { checkClient } from "@/lib/qualify/config";
+import { listCallBackVoices } from "@/lib/qualify/voices";
 import type { SettingsTarget, Viewer } from "./actions";
 import { DisconnectForm } from "./disconnect-form";
 import { SettingsForm } from "./settings-form";
@@ -12,7 +13,12 @@ export async function ClientSettingsView({ client, viewer }: { client: ClientSet
   const target: SettingsTarget = { viewer, locationId: client.locationId };
   const agency = viewer === "agency";
   // Live, so a stage added or renamed in GoHighLevel shows up on reload.
-  const { pipelines, pipeline, issues, ghlError } = await checkClient(client);
+  const [{ pipelines, pipeline, issues, ghlError }, voices] = await Promise.all([
+    checkClient(client),
+    // Signal holds the telephony keys, so the voices come from there. Null
+    // when it can't be reached: the client keeps the automatic voice.
+    listCallBackVoices(client.locationId),
+  ]);
   const todo = issues.filter((issue, i) => issues.findIndex((other) => other.text === issue.text) === i);
 
   return (
@@ -73,7 +79,10 @@ export async function ClientSettingsView({ client, viewer }: { client: ClientSet
             pipelineId: client.pipelineId,
             stages: client.stages,
             services: client.services,
+            callBacks: client.callBacks === true,
+            callBackVoiceId: client.callBackVoiceId ?? "",
           }}
+          voices={voices}
         />
       )}
 

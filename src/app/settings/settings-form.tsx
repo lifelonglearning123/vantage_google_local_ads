@@ -1,11 +1,12 @@
 "use client";
 
 import { unstable_rethrow } from "next/navigation";
-import { useEffect, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useRef, useState, useTransition, type FormEvent } from "react";
 import { CallFlow } from "@/components/call-flow";
 import { HelpButton } from "@/components/help-button";
 import { Icon, type IconName } from "@/components/icons";
 import type { Pipeline } from "@/lib/ghl";
+import { sortVoices, voiceLabel, type VoiceList } from "@/lib/qualify/voices";
 import { formatPhone } from "@/lib/phone";
 import { guessStage, STAGE_KINDS, stageNameWarning, type StageChoice, type StageKind } from "@/lib/qualify/stages";
 import { draftServicesAction, saveSettingsAction, type SaveState, type SettingsTarget } from "./actions";
@@ -27,17 +28,34 @@ type Field = keyof typeof FOCUS_ID;
 const SAVE_FAILED = "That save didn't go through. Reload the page, check the settings and save again.";
 const DRAFT_FAILED = "Couldn't reach the app just now. Reload the page and try again.";
 
-type Values = { numbers: string; services: string; pipelineId: string; stages: Record<StageKind, string> };
+type Values = {
+  numbers: string;
+  services: string;
+  pipelineId: string;
+  stages: Record<StageKind, string>;
+  callBacks: boolean;
+  callBackVoiceId: string;
+};
 const same = (a: Values, b: Values) => JSON.stringify(a) === JSON.stringify(b);
 
 export function SettingsForm({
   target,
   pipelines,
   initial,
+  voices,
 }: {
   target: SettingsTarget;
   pipelines: Pipeline[];
-  initial: { numbers: string[]; pipelineId: string | null; stages: StageChoice; services: string[] };
+  initial: {
+    numbers: string[];
+    pipelineId: string | null;
+    stages: StageChoice;
+    services: string[];
+    callBacks: boolean;
+    callBackVoiceId: string;
+  };
+  /** The voices Signal serves for this sub-account, or null when it couldn't be asked. */
+  voices: VoiceList | null;
 }) {
   const agency = target.viewer === "agency";
   const their = agency ? "their" : "your";
@@ -59,6 +77,8 @@ export function SettingsForm({
   const [saved, setSaved] = useState<Values>(() => ({
     numbers: initial.numbers.map(formatPhone).join("\n"),
     services: initial.services.join("\n"),
+    callBacks: initial.callBacks,
+    callBackVoiceId: initial.callBackVoiceId,
     pipelineId: savedPipeline?.id ?? "",
     stages: Object.fromEntries(
       STAGE_KINDS.map((kind) => {
@@ -69,7 +89,14 @@ export function SettingsForm({
   }));
   const [start] = useState<Values>(() => {
     const pipelineId = savedPipeline?.id ?? pipelines[0]?.id ?? "";
-    return { numbers: saved.numbers, services: saved.services, pipelineId, stages: stagesFor(pipelineId) };
+    return {
+      numbers: saved.numbers,
+      services: saved.services,
+      callBacks: saved.callBacks,
+      callBackVoiceId: saved.callBackVoiceId,
+      pipelineId,
+      stages: stagesFor(pipelineId),
+    };
   });
   const [values, setValues] = useState<Values>(start);
   const [resetTo, setResetTo] = useState<Values>(start);
@@ -96,6 +123,18 @@ export function SettingsForm({
   const numbersError = errorFor("numbers");
   const pipelineError = errorFor("pipeline");
   const stagesError = errorFor("stages");
+
+  // Voice samples come from Signal as plain URLs; one element, reused.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const chosenVoice = voices?.voices.find((v) => v.id === values.callBackVoiceId);
+  const automaticVoice = voices?.voices.find((v) => v.id === voices.automatic);
+  const previewUrl = (values.callBackVoiceId ? chosenVoice : automaticVoice)?.previewUrl ?? null;
+  const playVoice = () => {
+    if (!previewUrl) return;
+    if (!audioRef.current) audioRef.current = new Audio();
+    audioRef.current.src = previewUrl;
+    void audioRef.current.play();
+  };
 
   const suggestServices = () =>
     startDrafting(async () => {
@@ -326,6 +365,73 @@ export function SettingsForm({
               ) : null}
             </div>
           </section>
+
+          <section className="setup-section" id="setup-call-backs" aria-labelledby="call-backs-title">
+            <div className="section-head">
+              <span className="step" aria-hidden>
+                04
+              </span>
+              <h2 id="call-backs-title">Call-backs</h2>
+              <p>
+                When a caller hangs up or it isn&apos;t clear what they want, {their} AI receptionist rings them back
+                from the same number about 5 minutes later. Once per call, only during opening hours, and only while
+                the opportunity is still in {names.qualificationRequired ? `“${names.qualificationRequired}”` : "Qualification Required"}.
+              </p>
+              <HelpButton chapter="calls" />
+            </div>
+            <div className="field">
+              <label className="check">
+                <input
+                  type="checkbox"
+                  name="callBacks"
+                  checked={values.callBacks}
+                  onChange={(e) => setValues((v) => ({ ...v, callBacks: e.target.checked }))}
+                  aria-describedby="call-backs-hint"
+                />
+                Ring back callers who hang up or aren&apos;t clear
+              </label>
+              {values.callBacks && voices ? (
+                <div className="field" id="setup-call-back-voice">
+                  <label htmlFor="callBackVoiceId">Voice it rings back in</label>
+                  <div className="inline-actions">
+                    <select
+                      id="callBackVoiceId"
+                      name="callBackVoiceId"
+                      value={values.callBackVoiceId}
+                      onChange={(e) => setValues((v) => ({ ...v, callBackVoiceId: e.target.value }))}
+                    >
+                      <option value="">Choose for me</option>
+                      {sortVoices(voices).map((voice) => (
+                        <option key={voice.id} value={voice.id}>
+                          {voiceLabel(voice)}
+                          {voices.receptionistVoiceIds.includes(voice.id) ? " — answers calls now" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={playVoice}
+                      disabled={!previewUrl}
+                      title={previewUrl ? "Hear this voice" : "No sample for this voice"}
+                    >
+                      <Icon name="play" size={18} />
+                      Play
+                    </button>
+                  </div>
+                  <p className="hint">
+                    A different voice from the one that answered, so the caller knows someone has
+                    picked the phone up for them. Left to us, it picks a man&apos;s voice that
+                    isn&apos;t {their} receptionist&apos;s.
+                  </p>
+                </div>
+              ) : null}
+              <p id="call-backs-hint" className="hint">
+                Each call-back uses AI minutes, like any other call. It&apos;s skipped if they ring again first or someone
+                has already called them, and the contact&apos;s note says what happened.
+              </p>
+            </div>
+          </section>
         </div>
 
         <div className={`savebar${dirty ? " on-ink" : ""}`} data-dirty={dirty}>
@@ -356,7 +462,7 @@ export function SettingsForm({
         <h2 id="flow-title">What happens to each call</h2>
         <p>Using the stages chosen here. It changes as you pick.</p>
         <HelpButton chapter="calls" label="Watch what happens to a call" />
-        <CallFlow stages={names} warnings={warnings} />
+        <CallFlow stages={names} warnings={warnings} callBacks={values.callBacks} />
         <p className="flow-note">
           Someone who rings again keeps the same opportunity. It only ever moves forward, and once {their} team moves it
           on, it&apos;s left alone. Each call adds a note to the contact saying why.
