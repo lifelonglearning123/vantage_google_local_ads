@@ -146,6 +146,8 @@ export type CallBackVoice = z.infer<typeof callBackVoice>;
 
 export const callBackVoicesSchema = z.object({
   ok: z.boolean(),
+  /** The Signal workspace whose secret signed the request. */
+  agency: z.object({ slug: z.string(), name: z.string() }).nullish(),
   voices: z.array(callBackVoice).nullish(),
   /** The voices this client's own receptionists speak in. */
   receptionistVoiceIds: z.array(z.string()).nullish(),

@@ -16,6 +16,8 @@ import {
  */
 
 export type VoiceList = {
+  /** The Signal workspace this app is wired to, as Signal names it. */
+  agency: { slug: string; name: string } | null;
   voices: CallBackVoice[];
   /** Voices the client's own AI receptionist uses — a call-back must not sound like those. */
   receptionistVoiceIds: string[];
@@ -71,6 +73,7 @@ export async function listCallBackVoices(locationId: string): Promise<VoiceList 
     const parsed = callBackVoicesSchema.safeParse(await res.json().catch(() => null));
     if (!parsed.success || !parsed.data.ok) return null;
     return {
+      agency: parsed.data.agency ?? null,
       voices: parsed.data.voices ?? [],
       receptionistVoiceIds: parsed.data.receptionistVoiceIds ?? [],
       automatic: parsed.data.automatic ?? null,

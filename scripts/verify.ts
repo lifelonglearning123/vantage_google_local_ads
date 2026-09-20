@@ -264,6 +264,7 @@ async function main() {
   );
   check("note line for a refusal carries Signal's reason", callBackNoteLine({ kind: "refused", reason: "They rang again first." }, now) === "Call-back: not made. They rang again first.");
   const voiceList = {
+    agency: { slug: "test-agency", name: "Test agency" },
     voices: [
       { id: "v-rec", name: "Rachel", gender: "female", accent: "British", provider: "elevenlabs", previewUrl: "https://x/1" },
       { id: "v-m1", name: "Adam", gender: "male", accent: "British", provider: "elevenlabs", previewUrl: "https://x/2" },
