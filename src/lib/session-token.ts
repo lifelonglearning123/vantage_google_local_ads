@@ -9,10 +9,11 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
  * with its location ID and a working token: {"l": locationId, "e": expiresAtMs}.
  * It never holds the token, which stays encrypted in the client's settings file.
  *
- * The agency's session is {"a": username, "e": expiresAtMs}, signed with a key
- * made from the session secret AND the agency's username and password. So
- * changing AGENCY_PASSWORD signs the agency out everywhere, and neither kind of
- * session can pass for the other.
+ * An agency's session is {"a": username, "g": agencyId, "e": expiresAtMs},
+ * signed with a key made from the session secret AND that agency's id,
+ * username and password. So changing an agency's password signs it out
+ * everywhere, one agency's session never passes for another's, and neither
+ * kind of session can pass for the other.
  */
 
 export const SESSION_MAX_AGE_SEC = 7 * 24 * 60 * 60;
@@ -21,8 +22,8 @@ export type AgencyLogin = { username: string; password: string };
 
 const mac = (payload: string, key: string) => createHmac("sha256", key).update(payload).digest("base64url");
 
-const agencyKey = (secret: string, login: AgencyLogin) =>
-  createHmac("sha256", secret).update(`agency\n${login.username}\n${login.password}`).digest("base64url");
+const agencyKey = (secret: string, agencyId: string, login: AgencyLogin) =>
+  createHmac("sha256", secret).update(`agency\n${agencyId}\n${login.username}\n${login.password}`).digest("base64url");
 
 function sign(data: Record<string, unknown>, key: string): string {
   const payload = Buffer.from(JSON.stringify(data)).toString("base64url");
@@ -55,19 +56,21 @@ export function decodeSession(value: string | undefined, secret: string, now = D
   return typeof data?.l === "string" ? data.l : null;
 }
 
-export function encodeAgencySession(login: AgencyLogin, secret: string, now = Date.now()): string {
-  return sign({ a: login.username, e: now + SESSION_MAX_AGE_SEC * 1000 }, agencyKey(secret, login));
+export function encodeAgencySession(agencyId: string, login: AgencyLogin, secret: string, now = Date.now()): string {
+  return sign({ a: login.username, g: agencyId, e: now + SESSION_MAX_AGE_SEC * 1000 }, agencyKey(secret, agencyId, login));
 }
 
-/** Whether a value is a valid, unexpired agency session for this username and password. */
+/** Whether a value is a valid, unexpired session for this agency, with this username and password. */
 export function isAgencySession(
   value: string | undefined,
+  agencyId: string,
   login: AgencyLogin,
   secret: string,
   now = Date.now(),
 ): boolean {
   if (!secret) return false;
-  return open(value, agencyKey(secret, login), now)?.a === login.username;
+  const data = open(value, agencyKey(secret, agencyId, login), now);
+  return data?.a === login.username && data?.g === agencyId;
 }
 
 /** Whether a typed username and password are the agency's, without giving away how much of either was right. */

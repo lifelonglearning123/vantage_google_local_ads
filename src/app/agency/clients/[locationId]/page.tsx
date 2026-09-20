@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { HelpButton } from "@/components/help-button";
 import { TopBand } from "@/components/top-band";
 import { ClientSettingsView } from "@/app/settings/client-settings";
+import { agencyOf } from "@/lib/agencies";
 import { readClient } from "@/lib/clients";
 import { requireAgency } from "@/lib/session";
 import { AgencySignOut } from "../../sign-out-button";
@@ -10,16 +11,17 @@ import { AgencySignOut } from "../../sign-out-button";
 export const metadata: Metadata = { title: "Client settings" };
 
 export default async function AgencyClientPage({ params }: PageProps<"/agency/clients/[locationId]">) {
-  await requireAgency();
+  const agency = await requireAgency();
   const { locationId } = await params;
   const client = await readClient(locationId);
-  if (!client) redirect("/agency");
+  // Another agency's client is as good as none: nothing about it is shown.
+  if (!client || agencyOf(client)?.id !== agency.id) redirect("/agency");
 
   return (
     <>
       <TopBand
         brandHref="/agency"
-        tag="Agency"
+        tag={agency.name}
         back={{ href: "/agency", label: "All clients" }}
         title={client.businessName ?? "Unnamed sub-account"}
         subtitle={

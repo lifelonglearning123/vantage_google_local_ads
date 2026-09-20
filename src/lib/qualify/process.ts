@@ -1,3 +1,4 @@
+import { agencyOf, type Agency } from "@/lib/agencies";
 import { readClient } from "@/lib/clients";
 import {
   addContactNote,
@@ -20,6 +21,10 @@ import { LOST_REASON_LABELS, OUTCOME_LABELS, type Classification, type Outcome }
  * One Signal call in, one GoHighLevel opportunity sorted, using the settings
  * the client chose in the app (numbers, pipeline, stages, services). No call
  * or customer data is kept: the pipeline is GoHighLevel's, the call is Signal's.
+ *
+ * The agency is the one whose Signal workspace signed the call (the webhook
+ * route works that out). A call about a client that belongs to another agency
+ * is ignored: each workspace sorts only its own agency's clients.
  *
  * It runs in two halves so Signal isn't kept waiting:
  *  1. `acceptCall`, before responding: loads the client's settings, checks
@@ -58,7 +63,7 @@ const inFlight = new Set<string>();
 
 export const noteRef = (callId: string) => `Signal call ${callId}`;
 
-export async function acceptCall(event: CallSyncedEvent, deps: ProcessDeps = {}): Promise<AcceptResult> {
+export async function acceptCall(event: CallSyncedEvent, agency: Agency, deps: ProcessDeps = {}): Promise<AcceptResult> {
   const { call } = event;
   // Outbound calls are the team's, except a call-back: Signal ringing a caller
   // back for this app, whose result is sorted like the call it returns.
@@ -74,6 +79,9 @@ export async function acceptCall(event: CallSyncedEvent, deps: ProcessDeps = {})
   try {
     const settings = await readClient(locationId);
     if (!settings) return { kind: "ignored", reason: `sub-account ${locationId} isn't connected to the app` };
+    if (agencyOf(settings)?.id !== agency.id) {
+      return { kind: "ignored", reason: `sub-account ${locationId} belongs to another agency` };
+    }
     if (!callIsOnNumbers(settings.numbers, call)) {
       return { kind: "ignored", reason: `${call.toNumber ?? "the number called"} isn't one of the numbers chosen for this sub-account` };
     }
@@ -119,7 +127,7 @@ export async function acceptCall(event: CallSyncedEvent, deps: ProcessDeps = {})
     }
 
     handedOver = true;
-    const ready: Ready = { event, contactId, config, opportunity };
+    const ready: Ready = { event, agency, contactId, config, opportunity };
     return {
       kind: "accepted",
       opportunityId: opportunity.id,
@@ -133,6 +141,7 @@ export async function acceptCall(event: CallSyncedEvent, deps: ProcessDeps = {})
 
 type Ready = {
   event: CallSyncedEvent;
+  agency: Agency;
   contactId: string;
   config: LiveConfig;
   opportunity: Opportunity;
@@ -140,7 +149,7 @@ type Ready = {
 
 /** Never throws: whatever happens, the contact gets a note saying so. */
 async function finishCall(
-  { event, contactId, config, opportunity }: Ready,
+  { event, agency, contactId, config, opportunity }: Ready,
   classify: typeof classifyCall,
 ): Promise<FinishResult> {
   const { call } = event;
@@ -200,6 +209,7 @@ async function finishCall(
 
   result.callBack = await askForCallBack(
     event,
+    agency.signalWebhookSecret,
     { enabled: settings.callBacks === true, voiceId: settings.callBackVoiceId ?? null },
     verdict,
     result,
@@ -234,6 +244,7 @@ function customerNumber(call: CallSyncedEvent["call"]): string | null {
  */
 async function askForCallBack(
   event: CallSyncedEvent,
+  secret: string,
   callBacks: { enabled: boolean; voiceId: string | null },
   verdict: Classification | null,
   result: FinishResult,
@@ -249,10 +260,9 @@ async function askForCallBack(
     qualificationRequiredStageId,
   });
   if (!decision.ask) return decision.why ? `Call-back: not made. ${decision.why}` : null;
-  const secret = process.env.SIGNAL_WEBHOOK_SECRET;
   const outcome = secret
     ? await requestCallBack(event.callBackUrl ?? "", secret, event.call.id, decision.reason, callBacks.voiceId)
-    : ({ kind: "failed", reason: "SIGNAL_WEBHOOK_SECRET is not set" } as const);
+    : ({ kind: "failed", reason: "this agency has no Signal webhook secret" } as const);
   if (outcome.kind === "failed") {
     console.error("[qualify] call-back not requested", { callId: event.call.id, error: outcome.reason });
   }

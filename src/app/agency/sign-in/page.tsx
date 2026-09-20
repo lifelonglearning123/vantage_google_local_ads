@@ -3,14 +3,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthLayout } from "@/components/auth-layout";
 import { Icon } from "@/components/icons";
-import { agencyLogin, isAgencySignedIn } from "@/lib/session";
+import { agencySignIn, signedInAgency } from "@/lib/session";
 import { AgencySignInForm } from "./sign-in-form";
 
 export const metadata: Metadata = { title: "Agency sign-in" };
 
 export default async function AgencySignInPage() {
-  if (await isAgencySignedIn()) redirect("/agency");
-  const setup = agencyLogin();
+  if (await signedInAgency()) redirect("/agency");
+  const setup = await agencySignIn();
 
   return (
     <AuthLayout
@@ -20,7 +20,7 @@ export default async function AgencySignInPage() {
       <div className="auth-column">
         <section className="auth-card" aria-labelledby="agency-title">
           <div className="auth-card-head">
-            <h2 id="agency-title">Agency sign-in</h2>
+            <h2 id="agency-title">{setup.ok ? `${setup.agency.name} sign-in` : "Agency sign-in"}</h2>
           </div>
           {setup.ok ? (
             <AgencySignInForm />

@@ -11,8 +11,8 @@ import {
  *
  * This app holds no telephony credentials — on purpose — so it can't read the
  * voice list itself. Signal serves it for the sub-account, signed with the
- * same secret as everything else, and the client picks one on the settings
- * page. The chosen id rides back to Signal with each call-back request.
+ * secret of the agency the client belongs to, and the client picks one on the
+ * settings page. The chosen id rides back to Signal with each call-back request.
  */
 
 export type VoiceList = {
@@ -47,9 +47,8 @@ function signalBase(): string | null {
  * Never throws: a Signal that can't be reached leaves the client with the
  * automatic voice, which is what they'd have had anyway.
  */
-export async function listCallBackVoices(locationId: string): Promise<VoiceList | null> {
+export async function listCallBackVoices(locationId: string, secret: string | null): Promise<VoiceList | null> {
   const base = signalBase();
-  const secret = process.env.SIGNAL_WEBHOOK_SECRET;
   if (!base || !secret) return null;
   const body = callBackVoicesBody(locationId);
   const t = Math.floor(Date.now() / 1000);

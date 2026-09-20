@@ -1,6 +1,7 @@
 import { after, NextResponse, type NextRequest } from "next/server";
+import { agencyBySignature, agencySetup } from "@/lib/agencies";
 import { acceptCall } from "@/lib/qualify/process";
-import { SIGNATURE_HEADER, signalEventSchema, verifySignature } from "@/lib/signal/contract";
+import { SIGNATURE_HEADER, signalEventSchema } from "@/lib/signal/contract";
 
 // Enough for the verdict and the GoHighLevel writes that run after the response.
 export const maxDuration = 60;
@@ -10,19 +11,23 @@ export const maxDuration = 60;
  * opportunity is safely in the pipeline (a second or two — Signal waits on
  * this inside its own call ingest) and sorts it after responding. Any non-2xx
  * makes Signal send the call again on its next sync.
+ *
+ * Every agency's Signal workspace posts here, to its own domain. Which agency
+ * a call is for is decided by the secret that signed it, not the domain.
  */
 export async function POST(req: NextRequest) {
-  const secret = process.env.SIGNAL_WEBHOOK_SECRET;
-  if (!secret) {
-    return NextResponse.json({ ok: false, error: "SIGNAL_WEBHOOK_SECRET is not set" }, { status: 503 });
+  const setup = agencySetup();
+  if (!setup.ok) {
+    return NextResponse.json({ ok: false, error: setup.reason }, { status: 503 });
   }
 
   const raw = await req.text();
-  const signature = verifySignature(raw, req.headers.get(SIGNATURE_HEADER), secret);
-  if (!signature.ok) {
-    console.warn("[signal-webhook] rejected", { reason: signature.reason });
-    return NextResponse.json({ ok: false, error: signature.reason }, { status: 401 });
+  const signed = agencyBySignature(raw, req.headers.get(SIGNATURE_HEADER), setup.agencies);
+  if (!signed.ok) {
+    console.warn("[signal-webhook] rejected", { reason: signed.reason });
+    return NextResponse.json({ ok: false, error: signed.reason }, { status: 401 });
   }
+  const { agency } = signed;
 
   let body: unknown;
   try {
@@ -49,7 +54,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await acceptCall(event);
+    const result = await acceptCall(event, agency);
     if (result.kind !== "accepted") {
       return NextResponse.json({ ok: true, kind: result.kind, reason: result.reason });
     }

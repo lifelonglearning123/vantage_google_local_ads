@@ -1,4 +1,5 @@
 import { signPayload } from "@/lib/signal/contract";
+import { agencySecret } from "./agency-secret";
 import { SAMPLE_CALLS } from "./sample-calls";
 
 /**
@@ -8,6 +9,9 @@ import { SAMPLE_CALLS } from "./sample-calls";
  *     [--scenario boiler] [--from "+447700900123"] [--outbound]
  *     [--url http://localhost:3000/api/webhooks/signal]
  *   npm run send:test-call -- --ping
+ *
+ * Signs with SIGNAL_WEBHOOK_SECRET, or from AGENCIES the first agency's secret
+ * (--agency <id> picks another).
  *
  * Call-backs (Signal AGENTS.md, "Call-backs"), against `npm run signal:fake`:
  *
@@ -27,8 +31,7 @@ const arg = (name: string) => {
 const flag = (name: string) => process.argv.includes(`--${name}`);
 
 async function main() {
-  const secret = process.env.SIGNAL_WEBHOOK_SECRET;
-  if (!secret) throw new Error("SIGNAL_WEBHOOK_SECRET is not set.");
+  const secret = agencySecret();
   const url = arg("url") ?? "http://localhost:3000/api/webhooks/signal";
   const sentAt = new Date().toISOString();
   const deliveryId = crypto.randomUUID();

@@ -23,14 +23,20 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 - Connecting is signing in: a signed cookie holds only the location ID (`session-token.ts`).
 - `/settings` loads pipelines live and lets them choose numbers, pipeline, stages (pre-selected by name, `stages.ts`) and services. "Suggest from my website" (`draft-services.ts`) fills the form but saves nothing.
 
-**The agency** signs in at `/agency/sign-in` with `AGENCY_USERNAME` and `AGENCY_PASSWORD` (`src/app/agency`).
-- Its session is a separate signed cookie, `lq_agency`. The signing key includes the password, so changing the password signs the agency out everywhere, and neither kind of session passes for the other.
-- `/agency` lists every settings file (`listClients`). Each row's live check streams in.
+**Agencies** (`src/lib/agencies.ts`). One deployment serves several agencies, told apart by domain. The list is the `AGENCIES` env variable: per agency an `id`, `name`, `host`, `username`, `password` and `signalWebhookSecret`, read on every call (never at import time). Without it, `AGENCY_USERNAME`, `AGENCY_PASSWORD` and `SIGNAL_WEBHOOK_SECRET` make one agency on any host, which is what localhost uses.
+- **Which agency:** on pages and actions, the request's `Host` header (`agencyForRequest`, `src/lib/session.ts`). On the webhook, the secret that signed the call (`agencyBySignature`), never the domain.
+- **Whose client:** each settings file names its agency (`agency`, set when the file is first made, never changed after). A file naming none, or an unknown id, belongs to the FIRST agency in the list, so the original agency stays first. `agencyOf` is the only place that rule lives.
+- A client may connect at `/` on any agency's domain. A new sub-account joins that domain's agency; an existing one stays with its own. An agency can't "Add client" a sub-account that belongs to another agency.
+- Everything about a client goes through its own agency: the voice list and call-backs use the OWNER's Signal secret, and a call signed by another agency's Signal about it is ignored (2xx).
+
+**The agency** signs in at `/agency/sign-in` on its own domain (`src/app/agency`).
+- Its session is a separate signed cookie, `lq_agency`, naming the agency. The signing key includes the agency id and password, so changing a password signs that agency out everywhere, one agency's session never passes on another's domain, and neither kind of session passes for the other.
+- `/agency` lists that agency's settings files (`listAgencyClients`). Each row's live check streams in.
 - "Add client" goes through the same `connectClient` a client uses, without signing anyone in as that client.
-- `/agency/clients/<location ID>` renders the same view as `/settings` (`src/app/settings/client-settings.tsx`).
+- `/agency/clients/<location ID>` renders the same view as `/settings` (`src/app/settings/client-settings.tsx`), for the agency's own clients only.
 
 **Settings actions** receive `{ viewer, locationId }` from the page and trust neither value (`allowedClient` in `src/app/settings/actions.ts`).
-- The agency needs its own session.
+- The agency needs its own session, and the client must be its own.
 - A client gets only the sub-account in their own session.
 - Either way, the settings file must still exist.
 
@@ -49,7 +55,7 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 
 **Call-backs (`src/lib/qualify/call-back.ts`).** A per-client switch in settings (`callBacks` in the settings file; missing reads as off).
 - **When it asks:** an inbound call whose verdict is Qualification Required and whose opportunity ends in that stage. A hang-up asks with reason `hang_up` (decided by rule), anything else unclear with `unclear`. A Qualified or Lost caller, an opportunity already further along, or a call that couldn't be sorted never asks.
-- **How:** POST to the payload's `callBackUrl`, signed like the webhook with `SIGNAL_WEBHOOK_SECRET`. Signal owns the when (about a minute after the call, in opening hours), the number (the line they rang), the re-checks (they rang again, someone called them, the account is paused) and the call itself: its AGENTS.md, "Call-backs". No `callBackUrl` means Signal can't ring back that line; the note says so.
+- **How:** POST to the payload's `callBackUrl`, signed like the webhook with the agency's Signal secret. Signal owns the when (about a minute after the call, in opening hours), the number (the line they rang), the re-checks (they rang again, someone called them, the account is paused) and the call itself: its AGENTS.md, "Call-backs". No `callBackUrl` means Signal can't ring back that line; the note says so.
 - **The voice is the client's choice, here** — they switch call-backs on in this app, so they pick the voice here too (`callBackVoiceId` in the settings file, sent with the request). This app holds no telephony keys, so the list comes from Signal: `listCallBackVoices` (`src/lib/qualify/voices.ts`) asks `SIGNAL_BASE_URL` + `/api/call-backs/voices` with the same signature, and the settings step shows the voices with a Play button, the client's own receptionist's voice marked and pushed to the bottom. "Choose for me" sends nothing and Signal picks. Signal refuses a voice that isn't on the account or that IS the receptionist's — the point is that the caller hears someone else. Unreachable Signal or no `SIGNAL_BASE_URL`: the picker is hidden and the automatic voice stands.
 - **The note** gets one line: when they'll be rung back, or Signal's reason for not ringing, or that Signal couldn't be reached and the team should ring them.
 - **The result** comes back as a `call.synced` that is outbound with `callBackOf` set. `acceptCall` sorts it like any call: the number check uses the line it rang from, and the contact is the number it rang. No answer, busy or voicemail (`call.endReason`) is decided by rule and leaves it where it is. A call-back never asks for another.
@@ -65,6 +71,8 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 - answer non-2xx for calls the app chooses to ignore (Signal retries for about 25h);
 - save a suggested services list without the client pressing Save;
 - let a settings action act on the location ID it's sent without `allowedClient`;
+- pick the agency for a webhook call by domain, or let an agency see, list or add another agency's client;
+- change a client file's `agency` once set, or put a new agency first in `AGENCIES` (the first one owns every unnamed file);
 - decide in this app when, from which number or whether Signal rings a caller back: send the call ID, the reason and the chosen voice, nothing else;
 - add a second place to choose the call-back voice (Signal's agent settings deliberately has none);
 - ask for a call-back for an outbound call, including a call-back's own result;
@@ -74,7 +82,7 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 
 **Checks:** `npm run verify` (no network), `npm run try:qualifier`, `npm run typecheck`, `npm run lint`.
 
-**Trying it by hand.** `npm run dev`, then `npm run send:test-call -- --location <sub-account>` posts a signed call to it and writes to that sub-account. For call-backs without a Signal to ring anyone: `npm run signal:fake` (stands in for Signal's endpoint, checks the signature, answers "scheduled"), then send `--scenario hang-up --call-back-url http://127.0.0.1:4599/api/call-backs`, and send the call-back's own result back with `--call-back-of <the call id it printed>` and `--end-reason voicemail_reached`.
+**Trying it by hand.** `npm run dev`, then `npm run send:test-call -- --location <sub-account>` posts a signed call to it and writes to that sub-account. The scripts sign with `SIGNAL_WEBHOOK_SECRET`, or with `AGENCIES` the first agency's secret (`--agency <id>` picks another). For call-backs without a Signal to ring anyone: `npm run signal:fake` (stands in for Signal's endpoint, checks the signature, answers "scheduled"), then send `--scenario hang-up --call-back-url http://127.0.0.1:4599/api/call-backs`, and send the call-back's own result back with `--call-back-of <the call id it printed>` and `--end-reason voicemail_reached`.
 
 **Local dev:** `npm run dev` goes through `scripts/dev.mjs`, which raises Node's 16 KB request-header limit.
 - Why: browsers send every localhost cookie to every port, and other local apps' Supabase logins push server-action requests over the limit.

@@ -2,7 +2,8 @@ import { createHmac, randomBytes } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { deleteClient, listClients, readClient, saveClient, type ClientSettings } from "@/lib/clients";
+import { agencies, agencyBySignature, agencyForHost, agencyOf, agencySetup, type Agency } from "@/lib/agencies";
+import { deleteClient, listAgencyClients, listClients, readClient, saveClient, type ClientSettings } from "@/lib/clients";
 import { connectClient } from "@/lib/connect";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import type { Pipeline } from "@/lib/ghl";
@@ -320,21 +321,75 @@ async function main() {
 
   section("Agency sign-in");
   const login = { username: "agency", password: "correct horse battery" };
-  const agencyCookie = encodeAgencySession(login, sessionSecret, 1_000);
-  check("agency session accepted", isAgencySession(agencyCookie, login, sessionSecret, 2_000));
+  const agencyCookie = encodeAgencySession("vantage", login, sessionSecret, 1_000);
+  check("agency session accepted", isAgencySession(agencyCookie, "vantage", login, sessionSecret, 2_000));
   check(
     "changing the agency password signs the agency out",
-    !isAgencySession(agencyCookie, { ...login, password: "a brand new password" }, sessionSecret, 2_000),
+    !isAgencySession(agencyCookie, "vantage", { ...login, password: "a brand new password" }, sessionSecret, 2_000),
   );
-  check("expired agency session refused", !isAgencySession(agencyCookie, login, sessionSecret, 1_000 + 8 * 24 * 3600 * 1000));
+  check(
+    "one agency's session doesn't pass as another's, even with the same login",
+    !isAgencySession(agencyCookie, "leonardo", login, sessionSecret, 2_000),
+  );
+  check("expired agency session refused", !isAgencySession(agencyCookie, "vantage", login, sessionSecret, 1_000 + 8 * 24 * 3600 * 1000));
   const agencyTampered = agencyCookie.slice(0, -1) + (agencyCookie.endsWith("A") ? "B" : "A");
-  check("tampered agency session refused", !isAgencySession(agencyTampered, login, sessionSecret, 2_000));
-  check("a client's session doesn't pass as the agency's", !isAgencySession(cookie, login, sessionSecret, 2_000));
+  check("tampered agency session refused", !isAgencySession(agencyTampered, "vantage", login, sessionSecret, 2_000));
+  check("a client's session doesn't pass as the agency's", !isAgencySession(cookie, "vantage", login, sessionSecret, 2_000));
   check("the agency's session doesn't pass as a client's", decodeSession(agencyCookie, sessionSecret, 2_000) === null);
-  check("no session secret → no agency session", !isAgencySession(agencyCookie, login, "", 2_000));
+  check("no session secret → no agency session", !isAgencySession(agencyCookie, "vantage", login, "", 2_000));
   check("right username and password match", loginMatches(login, "agency", "correct horse battery"));
   check("wrong password doesn't match", !loginMatches(login, "agency", "correct horse batter"));
   check("wrong username doesn't match", !loginMatches(login, "Agency", "correct horse battery"));
+
+  section("Agencies, told apart by domain (AGENCIES)");
+  for (const key of ["AGENCIES", "AGENCY_USERNAME", "AGENCY_PASSWORD", "SIGNAL_WEBHOOK_SECRET"]) delete process.env[key];
+  check("nothing set: sign-in off, with a reason", !agencySetup().ok && agencies().length === 0);
+  process.env.SIGNAL_WEBHOOK_SECRET = "s".repeat(20);
+  const secretOnly = agencies();
+  check(
+    "only the Signal secret: one agency on every host that sorts calls but has no sign-in",
+    secretOnly.length === 1 && secretOnly[0].login === null && agencyForHost("anything.example")?.id === "default",
+    secretOnly,
+  );
+  process.env.AGENCY_USERNAME = "agency";
+  process.env.AGENCY_PASSWORD = "short";
+  check("legacy password too short: refused with a reason", !agencySetup().ok && /12 characters/.test((agencySetup() as { reason: string }).reason));
+  process.env.AGENCY_PASSWORD = "correct horse battery";
+  check(
+    "legacy AGENCY_USERNAME / AGENCY_PASSWORD / SIGNAL_WEBHOOK_SECRET: one agency that signs in",
+    agencies()[0]?.login?.username === "agency" && agencies()[0]?.signalWebhookSecret === "s".repeat(20),
+  );
+  const two = [
+    { id: "vantage", name: "Vantage", host: "Vantage.Example.com", username: "chao", password: "correct horse battery", signalWebhookSecret: "v".repeat(20) },
+    { id: "leonardo", host: "vantage.leonardo.example", username: "leo", password: "battery horse correct", signalWebhookSecret: "l".repeat(20) },
+  ];
+  process.env.AGENCIES = JSON.stringify(two);
+  const listed = agencies();
+  check("AGENCIES wins over the legacy variables, in the order written", listed.map((a) => a.id).join() === "vantage,leonardo", listed);
+  check("a name defaults to the id, and hosts are lower-cased", listed[1].name === "leonardo" && listed[0].host === "vantage.example.com");
+  check("the host picks the agency, port and case aside", agencyForHost("VANTAGE.example.com:3000")?.id === "vantage");
+  check("an unknown host is nobody's", agencyForHost("vantage-google-local-ads.vercel.app") === null && agencyForHost(null) === null);
+  check("a file naming an agency belongs to it", agencyOf({ agency: "leonardo" })?.id === "leonardo");
+  check("a file naming no agency, or an unknown one, belongs to the first", agencyOf({})?.id === "vantage" && agencyOf({ agency: "gone" })?.id === "vantage");
+  const signedBody = JSON.stringify({ event: "ping" });
+  const leoHeader = signPayload("l".repeat(20), signedBody, Math.floor(Date.now() / 1000));
+  check("the signature says which agency's Signal sent a call", (agencyBySignature(signedBody, leoHeader) as { agency: Agency }).agency?.id === "leonardo");
+  const strangerHeader = signPayload("x".repeat(20), signedBody, Math.floor(Date.now() / 1000));
+  const stranger = agencyBySignature(signedBody, strangerHeader);
+  check("a signature from no agency's secret is refused", !stranger.ok && /any agency/.test((stranger as { reason: string }).reason), stranger);
+  process.env.AGENCIES = JSON.stringify([two[0], { ...two[1], id: "vantage" }]);
+  check("two agencies with one id: refused", /same id/.test((agencySetup() as { reason: string }).reason ?? ""));
+  process.env.AGENCIES = JSON.stringify([{ ...two[0], password: "short" }]);
+  check("a short password names the agency and the field", /agency 1, password/.test((agencySetup() as { reason: string }).reason ?? ""), agencySetup());
+  process.env.AGENCIES = "{not json";
+  check("broken JSON: sign-in off with a reason, no agencies", !agencySetup().ok && agencies().length === 0);
+  // The rest runs as two agencies: ours on any host, and another one.
+  process.env.AGENCIES = JSON.stringify([
+    { id: "vantage", name: "Vantage", host: "*", username: "agency", password: "correct horse battery", signalWebhookSecret: "s".repeat(20) },
+    { id: "other", name: "Other", host: "other.example", username: "other", password: "battery horse correct", signalWebhookSecret: "o".repeat(20) },
+  ]);
+  const [AGENCY, OTHER]: Agency[] = agencies();
+  const accept = (e: CallSyncedEvent, deps?: Parameters<typeof acceptCall>[2]) => acceptCall(e, AGENCY, deps);
 
   section("Client settings files (localhost storage)");
   const clientsDir = mkdtempSync(path.join(tmpdir(), "lq-clients-"));
@@ -350,8 +405,15 @@ async function main() {
   check("saved settings read back unchanged", JSON.stringify(await readClient(FAKE_LOCATION)) === JSON.stringify(saved));
   await saveClient(makeSettings({ locationId: "loc2", businessName: "Abbey Electrical" }));
   writeFileSync(path.join(clientsDir, "notes.txt"), "not a client");
-  const listed = (await listClients()).map((c) => c.locationId);
-  check("every client listed by business name, other files ignored", listed.join() === "loc2,loc1", listed);
+  const listedIds = (await listClients()).map((c) => c.locationId);
+  check("every client listed by business name, other files ignored", listedIds.join() === "loc2,loc1", listedIds);
+  await saveClient(makeSettings({ locationId: "loc3", businessName: "Zed Roofing", agency: "other" }));
+  check(
+    "an agency lists its own clients and the unnamed ones, never another's",
+    (await listAgencyClients(AGENCY)).map((c) => c.locationId).join() === "loc2,loc1" &&
+      (await listAgencyClients(OTHER)).map((c) => c.locationId).join() === "loc3",
+  );
+  await deleteClient("loc3");
   await deleteClient("loc2");
   await deleteClient(FAKE_LOCATION);
   check(
@@ -362,29 +424,42 @@ async function main() {
   section("Connecting a sub-account (fake GoHighLevel)");
   const ghl = await startFakeGhl();
   process.env.GHL_API_BASE = ghl.url;
-  const wrongToken = await connectClient(FAKE_LOCATION, "pit-wrong-token");
+  const wrongToken = await connectClient(FAKE_LOCATION, "pit-wrong-token", AGENCY.id, "client");
   check(
     "wrong token: GoHighLevel's reason, nothing saved",
     !wrongToken.ok && /refused/i.test(wrongToken.error) && (await readClient(FAKE_LOCATION)) === null,
     wrongToken,
   );
   const askedBefore = ghl.log.length;
-  const oddId = await connectClient("../loc1", FAKE_TOKEN);
+  const oddId = await connectClient("../loc1", FAKE_TOKEN, AGENCY.id, "client");
   check("odd location ID refused before GoHighLevel is asked", !oddId.ok && ghl.log.length === askedBefore, oddId);
-  const connected = await connectClient(FAKE_LOCATION, FAKE_TOKEN);
+  const connected = await connectClient(FAKE_LOCATION, FAKE_TOKEN, AGENCY.id, "client");
   check(
-    "right token: saved with the business name, nothing chosen yet",
+    "right token: saved with the business name and the agency, nothing chosen yet",
     connected.ok &&
       connected.settings.businessName === "Hartley Plumbing & Heating" &&
+      connected.settings.agency === AGENCY.id &&
       (await readClient(FAKE_LOCATION))?.pipelineId === null,
     connected,
   );
   await saveClient(makeSettings());
-  const reconnected = await connectClient(FAKE_LOCATION, FAKE_TOKEN);
+  const reconnected = await connectClient(FAKE_LOCATION, FAKE_TOKEN, AGENCY.id, "client");
   check(
     "connecting again keeps the chosen settings",
     reconnected.ok && reconnected.settings.pipelineId === "p-sales" && reconnected.settings.services.length === 3,
     reconnected,
+  );
+  const poached = await connectClient(FAKE_LOCATION, FAKE_TOKEN, OTHER.id, "agency");
+  check(
+    "another agency can't add a sub-account that's already someone's client",
+    !poached.ok && /another agency/.test(poached.error) && agencyOf((await readClient(FAKE_LOCATION)) ?? {})?.id === AGENCY.id,
+    poached,
+  );
+  const elsewhere = await connectClient(FAKE_LOCATION, FAKE_TOKEN, OTHER.id, "client");
+  check(
+    "the client can still sign in on another agency's domain, and stays with their agency",
+    elsewhere.ok && agencyOf(elsewhere.settings)?.id === AGENCY.id,
+    elsewhere,
   );
   ghl.log.length = 0;
 
@@ -405,21 +480,27 @@ async function main() {
       ...over,
     });
   const run = async (e: CallSyncedEvent, classify: () => Promise<Classification>) => {
-    const accepted = await acceptCall(e, { classify });
+    const accepted = await accept(e, { classify });
     const finished = accepted.kind === "accepted" ? await accepted.finish() : null;
     return { accepted, finished };
   };
   const oppsOf = (contactId: string | undefined) => ghl.opps.filter((o) => o.contactId === contactId);
   const notesOf = (contactId: string) => ghl.notes.filter((x) => x.contactId === contactId);
 
-  check("outbound call ignored", (await acceptCall(makeEvent({ direction: "outbound" }))).kind === "ignored");
-  check("sub-account that isn't connected: ignored", (await acceptCall(makeEvent({ locationId: "loc2" }))).kind === "ignored");
-  const offList = await acceptCall(makeEvent({ contactId: "c-offlist", to: "+441223000000" }), { classify: verdict("qualified") });
+  check("outbound call ignored", (await accept(makeEvent({ direction: "outbound" }))).kind === "ignored");
+  check("sub-account that isn't connected: ignored", (await accept(makeEvent({ locationId: "loc2" }))).kind === "ignored");
+  const otherAgency = await acceptCall(makeEvent({ contactId: "c-other" }), OTHER, { classify: verdict("qualified") });
+  check(
+    "a call signed by another agency's Signal about this client: ignored, nothing written",
+    otherAgency.kind === "ignored" && /another agency/.test(otherAgency.reason) && oppsOf("c-other").length === 0,
+    otherAgency,
+  );
+  const offList = await accept(makeEvent({ contactId: "c-offlist", to: "+441223000000" }), { classify: verdict("qualified") });
   check("call to a number the client didn't choose: ignored", offList.kind === "ignored", offList);
   check("ignored calls never reach GoHighLevel", ghl.log.length === 0, ghl.log);
 
   const first = makeEvent({ contactId: "c-dave" });
-  const a1 = await acceptCall(first, { classify: verdict("qualified") });
+  const a1 = await accept(first, { classify: verdict("qualified") });
   check("new caller: accepted with a new opportunity", a1.kind === "accepted" && a1.created, a1);
   check("new caller: in New Leads before the verdict", oppsOf("c-dave")[0]?.pipelineStageId === "st-new");
   const f1 = a1.kind === "accepted" ? await a1.finish() : null;
@@ -431,7 +512,7 @@ async function main() {
     notesOf("c-dave"),
   );
   const writesBefore = ghl.opps.length + ghl.notes.length;
-  check("same call sent again → duplicate", (await acceptCall(first)).kind === "duplicate");
+  check("same call sent again → duplicate", (await accept(first)).kind === "duplicate");
   check("duplicate writes nothing", ghl.opps.length + ghl.notes.length === writesBefore);
 
   const repeat = await run(makeEvent({ contactId: "c-dave" }), verdict("qualification_required"));
@@ -470,7 +551,7 @@ async function main() {
     down.finished,
   );
   check("qualifier down: the note says why", notesOf("c-fail").some((x) => x.body.includes("model down")));
-  check("qualifier down: a resend isn't redone", (await acceptCall(failing)).kind === "duplicate");
+  check("qualifier down: a resend isn't redone", (await accept(failing)).kind === "duplicate");
 
   const noContact = await run(makeEvent({ contactId: null, from: "+447700900555" }), verdict("qualification_required"));
   const made = ghl.contacts.find((c) => c.phone === "+447700900555");
@@ -506,7 +587,7 @@ async function main() {
   const [newLeadsStage] = salesStages.splice(newLeadsAt, 1);
   let refused = "";
   try {
-    await acceptCall(makeEvent({ contactId: "c-nostage" }), { classify: verdict("qualified") });
+    await accept(makeEvent({ contactId: "c-nostage" }), { classify: verdict("qualified") });
   } catch (e) {
     refused = e instanceof Error ? e.message : String(e);
   }
@@ -531,17 +612,16 @@ async function main() {
 
   const twin = makeEvent({ contactId: "c-twin" });
   const [x, y] = await Promise.all([
-    acceptCall(twin, { classify: verdict("qualified") }),
-    acceptCall(twin, { classify: verdict("qualified") }),
+    accept(twin, { classify: verdict("qualified") }),
+    accept(twin, { classify: verdict("qualified") }),
   ]);
   check("same call twice at once: one handled, one duplicate", [x.kind, y.kind].sort().join() === "accepted,duplicate", [x.kind, y.kind]);
   for (const r of [x, y]) if (r.kind === "accepted") await r.finish();
   check("same call twice at once: one opportunity, one note", oppsOf("c-twin").length === 1 && notesOf("c-twin").length === 1);
 
   section("Call-backs (fake Signal)");
-  const secretForSignal = `whsec-${"t".repeat(24)}`;
-  const signal = await startFakeSignal({ secret: secretForSignal });
-  process.env.SIGNAL_WEBHOOK_SECRET = secretForSignal;
+  // The fake Signal checks call-back requests against the agency's own secret.
+  const signal = await startFakeSignal({ secret: AGENCY.signalWebhookSecret });
   await saveClient(makeSettings({ callBacks: true }));
   const lastLine = (contactId: string) => notesOf(contactId).at(-1)?.body ?? "";
 
@@ -626,7 +706,7 @@ async function main() {
     endReason: "voicemail_reached",
     transcript: "User: Hi, you've reached Sam. Leave a message.",
   });
-  const unanswered = await acceptCall(unansweredEvent);
+  const unanswered = await accept(unansweredEvent);
   const unansweredDone = unanswered.kind === "accepted" ? await unanswered.finish() : null;
   check(
     "call-back to voicemail: left in Qualification Required, no model, no new call-back",
@@ -636,7 +716,7 @@ async function main() {
       signal.requests.length === beforeVoicemail,
     { done: unansweredDone, note: lastLine("c-unclear") },
   );
-  const offLine = await acceptCall(
+  const offLine = await accept(
     makeEvent({ direction: "outbound", from: "+441223000000", contactId: "c-hangup", callBackOf: { callId: "x", reason: "hang_up" } }),
   );
   check("call-back from a number the client didn't choose: ignored", offLine.kind === "ignored", offLine);
@@ -648,7 +728,7 @@ async function main() {
   signal.close();
 
   await deleteClient(FAKE_LOCATION);
-  check("after disconnecting, calls are ignored", (await acceptCall(makeEvent({ contactId: "c-after" }))).kind === "ignored");
+  check("after disconnecting, calls are ignored", (await accept(makeEvent({ contactId: "c-after" }))).kind === "ignored");
   ghl.close();
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
