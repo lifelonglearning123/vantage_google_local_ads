@@ -571,7 +571,7 @@ async function main() {
   );
   check(
     "hang-up: the note says when they'll be rung back",
-    lastLine("c-hangup").includes("Call-back: the AI receptionist will ring them back in about 5 minutes."),
+    lastLine("c-hangup").includes("Call-back: the AI receptionist will ring them back in a minute or two."),
     lastLine("c-hangup"),
   );
 

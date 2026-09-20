@@ -5,8 +5,8 @@ import { SIGNATURE_HEADER, verifySignature } from "@/lib/signal/contract";
 /**
  * Stands in for Signal's call-back endpoint, so call-backs can be tried
  * without a Signal to ring anyone. It checks the signature exactly as Signal
- * does, records what was asked for, and answers "scheduled" for five minutes
- * from now.
+ * does, records what was asked for, and answers "scheduled" for about a
+ * minute from now, as Signal would.
  *
  * Used by scripts/verify.ts, and runnable on its own while the app is up:
  *
@@ -81,7 +81,7 @@ export async function startFakeSignal(opts: { secret: string; port?: number; log
         callBackId: `cb-${requests.length}`,
         status: "scheduled",
         // Signal answers with the moment it will ring and the client's zone.
-        dueAt: new Date(Date.now() + 5 * 60_000 + 20_000).toISOString(),
+        dueAt: new Date(Date.now() + 45_000).toISOString(),
         timezone: "Europe/London",
       });
     });

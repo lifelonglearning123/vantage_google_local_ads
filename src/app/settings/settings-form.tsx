@@ -374,7 +374,7 @@ export function SettingsForm({
               <h2 id="call-backs-title">Call-backs</h2>
               <p>
                 When a caller hangs up or it isn&apos;t clear what they want, {their} AI receptionist rings them back
-                from the same number about 5 minutes later. Once per call, only during opening hours, and only while
+                from the same number about a minute later. Once per call, only during opening hours, and only while
                 the opportunity is still in {names.qualificationRequired ? `“${names.qualificationRequired}”` : "Qualification Required"}.
               </p>
               <HelpButton chapter="calls" />
