@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { agencySecret } from "./agency-secret";
 import type { AddressInfo } from "node:net";
 import { SIGNATURE_HEADER, verifySignature } from "@/lib/signal/contract";
 
@@ -101,8 +102,7 @@ export async function startFakeSignal(opts: { secret: string; port?: number; log
 
 // Run directly: stay up and print every call-back asked for.
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("scripts/fake-signal.ts")) {
-  const secret = process.env.SIGNAL_WEBHOOK_SECRET;
-  if (!secret) throw new Error("SIGNAL_WEBHOOK_SECRET is not set.");
+  const secret = agencySecret();
   const portArg = process.argv.indexOf("--port");
   const port = portArg >= 0 ? Number(process.argv[portArg + 1]) : 4599;
   startFakeSignal({ secret, port, log: true }).then((fake) => {

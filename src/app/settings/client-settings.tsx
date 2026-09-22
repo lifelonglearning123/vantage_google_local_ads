@@ -1,5 +1,6 @@
 import { HelpButton } from "@/components/help-button";
 import { Icon } from "@/components/icons";
+import { agencyOf } from "@/lib/agencies";
 import type { ClientSettings } from "@/lib/clients";
 import { formatPhone } from "@/lib/phone";
 import { checkClient } from "@/lib/qualify/config";
@@ -15,9 +16,10 @@ export async function ClientSettingsView({ client, viewer }: { client: ClientSet
   // Live, so a stage added or renamed in GoHighLevel shows up on reload.
   const [{ pipelines, pipeline, issues, ghlError }, voices] = await Promise.all([
     checkClient(client),
-    // Signal holds the telephony keys, so the voices come from there. Null
-    // when it can't be reached: the client keeps the automatic voice.
-    listCallBackVoices(client.locationId),
+    // Signal holds the telephony keys, so the voices come from there: the
+    // Signal workspace of the agency this client belongs to. Null when it
+    // can't be reached: the client keeps the automatic voice.
+    listCallBackVoices(client.locationId, agencyOf(client)?.signalWebhookSecret ?? null),
   ]);
   const todo = issues.filter((issue, i) => issues.findIndex((other) => other.text === issue.text) === i);
 

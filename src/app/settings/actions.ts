@@ -2,6 +2,7 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
+import { agencyOf } from "@/lib/agencies";
 import { deleteClient, readClient, saveClient, type ClientSettings } from "@/lib/clients";
 import { decryptSecret } from "@/lib/crypto";
 import { getLocation, listPipelines, type Pipeline } from "@/lib/ghl";
@@ -29,16 +30,16 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * The client an action may change. Nothing the page sends is trusted: the
- * agency needs its own session to touch any client, and a client only ever
- * gets their own sub-account. Also re-checks the client is still connected.
+ * agency needs its own session and gets only its own clients, and a client
+ * only ever gets their own sub-account. Also re-checks the client is still connected.
  */
 async function allowedClient(target: SettingsTarget): Promise<ClientSettings> {
-  const agency = target?.viewer === "agency";
+  const asAgency = target?.viewer === "agency";
   const locationId = typeof target?.locationId === "string" ? target.locationId : "";
-  if (agency) await requireAgency();
-  else if (!locationId || (await getSignedInLocation()) !== locationId) redirect("/");
+  const agency = asAgency ? await requireAgency() : null;
+  if (!agency && (!locationId || (await getSignedInLocation()) !== locationId)) redirect("/");
   const client = await readClient(locationId);
-  if (!client) redirect(agency ? "/agency" : "/");
+  if (!client || (agency && agencyOf(client)?.id !== agency.id)) redirect(agency ? "/agency" : "/");
   return client;
 }
 

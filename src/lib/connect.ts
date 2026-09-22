@@ -1,3 +1,4 @@
+import { agencyOf } from "@/lib/agencies";
 import { readClient, saveClient, type ClientSettings } from "@/lib/clients";
 import { encryptSecret } from "@/lib/crypto";
 import { getLocation, listPipelines, probeContactsAccess } from "@/lib/ghl";
@@ -15,8 +16,17 @@ const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * sub-account is theirs. The token is saved encrypted so calls can be sorted
  * while nobody's on the page; connecting again with a new token replaces it
  * and keeps the settings.
+ *
+ * A new file belongs to the agency whose domain it was connected on, for
+ * good. A client may sign in on any domain; an agency can't take over a
+ * sub-account that already belongs to another one.
  */
-export async function connectClient(locationId: string, token: string): Promise<ConnectResult> {
+export async function connectClient(
+  locationId: string,
+  token: string,
+  agencyId: string,
+  by: "client" | "agency",
+): Promise<ConnectResult> {
   if (!/^[A-Za-z0-9]{1,64}$/.test(locationId)) {
     return {
       ok: false,
@@ -39,6 +49,9 @@ export async function connectClient(locationId: string, token: string): Promise<
   const info = location.status === "fulfilled" ? location.value : null;
   const now = new Date().toISOString();
   const existing = await readClient(locationId);
+  if (existing && by === "agency" && agencyOf(existing)?.id !== agencyId) {
+    return { ok: false, error: "This sub-account is already connected under another agency." };
+  }
   const settings: ClientSettings = existing
     ? {
         ...existing,
@@ -57,6 +70,7 @@ export async function connectClient(locationId: string, token: string): Promise<
         pipelineId: null,
         stages: { newLeads: null, qualified: null, qualificationRequired: null, lost: null },
         services: [],
+        agency: agencyId,
         connectedAt: now,
         updatedAt: now,
       };

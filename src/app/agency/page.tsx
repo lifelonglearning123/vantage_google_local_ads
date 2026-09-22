@@ -4,7 +4,7 @@ import { ConnectForm } from "@/components/connect-form";
 import { HelpButton } from "@/components/help-button";
 import { Icon } from "@/components/icons";
 import { TopBand } from "@/components/top-band";
-import { listClients, type ClientSettings } from "@/lib/clients";
+import { listAgencyClients, type ClientSettings } from "@/lib/clients";
 import { formatPhone } from "@/lib/phone";
 import { checkClient, type ClientCheck } from "@/lib/qualify/config";
 import { requireAgency } from "@/lib/session";
@@ -15,14 +15,14 @@ import { AgencySignOut } from "./sign-out-button";
 export const metadata: Metadata = { title: "Clients" };
 
 export default async function AgencyPage() {
-  await requireAgency();
-  const clients = await listClients();
+  const agency = await requireAgency();
+  const clients = await listAgencyClients(agency);
 
   return (
     <>
       <TopBand
         brandHref="/agency"
-        tag="Agency"
+        tag={agency.name}
         title="Clients"
         subtitle="Every sub-account connected to the app, whether you added it or the client connected it themselves."
         actions={

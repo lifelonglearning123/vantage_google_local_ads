@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { del, get, list, put } from "@vercel/blob";
+import { agencyOf, type Agency } from "@/lib/agencies";
 import type { StageChoice } from "@/lib/qualify/stages";
 
 /**
@@ -37,6 +38,12 @@ export type ClientSettings = {
    * caller just heard.
    */
   callBackVoiceId?: string | null;
+  /**
+   * The agency this client belongs to (src/lib/agencies.ts), set when the file
+   * is first made and never changed after. Missing in files from before
+   * agencies were told apart, which reads as the first agency in AGENCIES.
+   */
+  agency?: string;
   connectedAt: string;
   updatedAt: string;
 };
@@ -106,6 +113,11 @@ export async function listClients(): Promise<ClientSettings[]> {
   );
   const name = (c: ClientSettings) => c.businessName ?? c.locationId;
   return clients.filter((c) => c !== null).sort((a, b) => name(a).localeCompare(name(b)));
+}
+
+/** One agency's clients: the files that name it, plus the unnamed ones when it's first in the list. */
+export async function listAgencyClients(agency: Agency): Promise<ClientSettings[]> {
+  return (await listClients()).filter((c) => agencyOf(c)?.id === agency.id);
 }
 
 async function blobLocationIds(): Promise<string[]> {
