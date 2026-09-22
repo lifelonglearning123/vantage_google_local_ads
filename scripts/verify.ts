@@ -10,7 +10,15 @@ import type { Pipeline } from "@/lib/ghl";
 import { normalizePhone, parsePhoneList } from "@/lib/phone";
 import { callBackDecision, callBackNoteLine, callBackWhen } from "@/lib/qualify/call-back";
 import { sortVoices, voiceLabel } from "@/lib/qualify/voices";
-import { classifyCall, findService, nothingFromCaller, settleVerdict, type ModelVerdict } from "@/lib/qualify/classify";
+import {
+  buildInstructions,
+  classifyCall,
+  findService,
+  googleAnnouncement,
+  nothingFromCaller,
+  settleVerdict,
+  type ModelVerdict,
+} from "@/lib/qualify/classify";
 import { callIsOnNumbers, resolveConfig } from "@/lib/qualify/config";
 import { planOpportunity, type OpportunityPlan, type StageIds } from "@/lib/qualify/decide";
 import { htmlToText, nextHop, readProblem, websiteAddress } from "@/lib/qualify/draft-services";
@@ -149,6 +157,71 @@ async function main() {
   check("caller speech goes to the model", !nothingFromCaller({ transcript: "Agent: Hello\nUser: My drain's blocked", summary: null }));
   check("unlabelled text goes to the model", !nothingFromCaller({ transcript: "my drain is blocked", summary: null }));
   check("no transcript or summary needs no model", nothingFromCaller({ transcript: null, summary: null }));
+
+  section("Google's announcement (\"Call from Google\")");
+  const nickDyer = "User: Call from Google.\nAgent: Hi, I'm Louise, a virtual assistant at Nick Dyer Construction. Are you looking into a renovation?";
+  const g = googleAnnouncement(nickDyer);
+  check(
+    "taken off the caller's first line, and the call marked as a Google ad call",
+    g.announced && g.transcript?.split("\n")[0].trim() === "User:" && g.transcript?.includes("Agent: Hi, I'm Louise") === true,
+    g,
+  );
+  check("with it gone, the caller said nothing", nothingFromCaller({ transcript: g.transcript, summary: null }));
+  for (const said of ["Call from Google", "call from google", "Call from Google Local Services.", "Called from Google.", "This is a call from Google."]) {
+    check(`recognised: "${said}"`, googleAnnouncement(`User: ${said}\nAgent: Hello`).announced);
+  }
+  const merged = googleAnnouncement("User: Call from Google. Hi, my drain's blocked.\nAgent: Let me help.");
+  check("the caller's own words on the same line are kept", merged.announced && merged.transcript?.startsWith("User: Hi, my drain's blocked.") === true, merged);
+  for (const said of [
+    "I'm calling from Google about your business listing",
+    "Calling from Google Ads about your account",
+    "I got your number from Google",
+    "Call from Googleplex",
+  ]) {
+    check(`not the announcement: "${said}"`, !googleAnnouncement(`Agent: Hello\nUser: ${said}`).announced);
+  }
+  check(
+    "only the caller's first line counts",
+    !googleAnnouncement("Agent: Hello\nUser: My drain's blocked\nUser: Call from Google").announced,
+  );
+  check("an unlabelled transcript that opens with it", googleAnnouncement("Call from Google. Need a builder.").transcript === "Need a builder.");
+  check("no transcript, nothing announced", !googleAnnouncement(null).announced);
+
+  const googleHangUp = await classifyCall({
+    businessName: "Nick Dyer Construction",
+    services: ["Extensions", "Loft conversions"],
+    transcript: nickDyer,
+    summary: "The user called and identified the call as from Google. The agent introduced herself as Louise. The call ended shortly after without further interaction.",
+    screeningOutcome: null,
+    endReason: "user_hangup",
+  });
+  check(
+    "the Nick Dyer call: Not clear yet, or hung up, decided by rule without the model",
+    googleHangUp.outcome === "qualification_required" && googleHangUp.decidedBy === "rule" && /Google put this call through/.test(googleHangUp.reasoning),
+    googleHangUp,
+  );
+  const pitchViaAd = settleVerdict(
+    { ...base, outcome: "lost", lost_reason: "sales_pitch", matched_service: null, confidence: "high" },
+    services,
+    "m",
+    { googleAd: true },
+  );
+  check(
+    "a Google ad call is never marked lost, whatever the model says",
+    pitchViaAd.outcome === "qualification_required" && pitchViaAd.lostReason === null && /Google ad/.test(pitchViaAd.reasoning),
+    pitchViaAd,
+  );
+  check("a Google ad call can still be qualified", settleVerdict(base, services, "m", { googleAd: true }).outcome === "qualified");
+  check(
+    "without the announcement, a confident lost still stands",
+    settleVerdict({ ...base, outcome: "lost", lost_reason: "sales_pitch", matched_service: null }, services, "m").outcome === "lost",
+  );
+  const told = buildInstructions({ businessName: "B", services, transcript: null, summary: null, screeningOutcome: null }, { googleAd: true });
+  check("the model is told the words were Google's", /Google said "Call from Google"/.test(told) && /Never choose "lost"/.test(told));
+  check(
+    "other calls get no Google note",
+    !/Call from Google/.test(buildInstructions({ businessName: "B", services, transcript: null, summary: null, screeningOutcome: null })),
+  );
 
   section("Stage rules");
   const S: StageIds = { newLeads: "st-new", qualificationRequired: "st-qr", qualified: "st-q", lost: null };

@@ -97,4 +97,47 @@ export const SAMPLE_CALLS: Record<string, SampleCall> = {
     summary: null,
     transcript: GREETING,
   },
+  // Google says "Call from Google" before it puts an ad caller through; the transcript credits it to the caller.
+  "google-hang-up": {
+    expect: "qualification_required",
+    summary:
+      "The user called and identified the call as from Google. The agent introduced herself as Louise, a virtual assistant at Hartley Plumbing and Heating, and asked how she could help. The call ended shortly after without further interaction.",
+    transcript: lines(
+      "User: Call from Google.",
+      "Agent: Hi, I'm Louise, a virtual assistant at Hartley Plumbing and Heating. Are you calling about a repair or a new installation?",
+    ),
+  },
+  "google-boiler": {
+    expect: "qualified",
+    summary: "The call came from Google. The caller's boiler has stopped working and they want someone out this week.",
+    transcript: lines(
+      "User: Call from Google.",
+      GREETING,
+      "User: Hi, my boiler's stopped working, no heating or hot water. Can someone come out this week?",
+      "Agent: I'm sorry to hear that. Can I take your name and postcode?",
+      "User: Sarah Jones, CB1 3AA.",
+    ),
+  },
+  "google-then-pitch": {
+    expect: "qualification_required",
+    summary: "The call came from Google. The caller offered to improve the business's website ranking.",
+    transcript: lines(
+      "User: Call from Google.",
+      GREETING,
+      "User: Hi, I help local trades get more jobs from Google. Could I speak to the owner about your website?",
+      "Agent: I can pass a message on. What's your name?",
+      "User: It's Mark, I'll try again later.",
+    ),
+  },
+  // A real Google sales call: the caller's own words, so it's judged like any pitch.
+  "google-sales-call": {
+    expect: "lost",
+    summary: "The caller said they were calling from Google Ads about the business's advertising account and wanted to set up a review.",
+    transcript: lines(
+      GREETING,
+      "User: Hi, I'm calling from Google Ads about your advertising account. We'd like to book a free review of your campaigns with the owner.",
+      "Agent: I can pass a message on. Can I take your name?",
+      "User: It's Priya from the Google Ads team. I'll email over some times.",
+    ),
+  },
 };

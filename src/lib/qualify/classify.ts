@@ -30,6 +30,40 @@ const UNANSWERED: Record<string, string> = {
   voicemail_reached: "The call-back reached their voicemail, and a message was left.",
 };
 
+/**
+ * What Google says to the business before it puts a caller through from a
+ * Local Services ad: "Call from Google". The receptionist hears it on the
+ * caller's side, so the transcript credits it to the caller, and Signal's
+ * summary can too. It never matches "I'm calling from Google", which is how a
+ * real Google sales call starts: that one is the caller's, and the model judges it.
+ */
+const GOOGLE_ANNOUNCEMENT =
+  /^\s*(?:this is a\s+)?call(?:ed)?\s+from\s+google(?:\s+local\s+services|\s+ads)?\b\s*[.!,:;-]*\s*/i;
+const CALLER_LINE = /^(\s*(?:user|caller|customer|human)\s*:\s*)(.*)$/i;
+const AGENT_LINE = /^\s*(?:agent|assistant|ai|bot)\s*:/i;
+
+/**
+ * Takes Google's announcement off the caller's first line (or the start of an
+ * unlabelled transcript). `announced` means the call came through the
+ * business's Google ad.
+ */
+export function googleAnnouncement(transcript: string | null): { announced: boolean; transcript: string | null } {
+  if (!transcript) return { announced: false, transcript };
+  const lines = transcript.split(/\r?\n/);
+  const first = lines.findIndex((line) => CALLER_LINE.test(line));
+  if (first >= 0) {
+    // Google speaks before the caller does, so only the caller's first line can hold it.
+    const [, label, said] = CALLER_LINE.exec(lines[first]) ?? [];
+    if (!GOOGLE_ANNOUNCEMENT.test(said ?? "")) return { announced: false, transcript };
+    lines[first] = label + (said ?? "").replace(GOOGLE_ANNOUNCEMENT, "");
+    return { announced: true, transcript: lines.join("\n") };
+  }
+  if (lines.some((line) => AGENT_LINE.test(line)) || !GOOGLE_ANNOUNCEMENT.test(transcript)) {
+    return { announced: false, transcript };
+  }
+  return { announced: true, transcript: transcript.replace(GOOGLE_ANNOUNCEMENT, "") };
+}
+
 /** What the model returns, before `settleVerdict` applies the guards. */
 export type ModelVerdict = {
   outcome: Outcome;
@@ -50,6 +84,10 @@ const MAX_TRANSCRIPT_CHARS = 16_000;
  * Everything else goes to the model, then through `settleVerdict`, which only
  * ever moves a verdict towards Qualification Required — the stage a person
  * looks at — never away from it.
+ *
+ * Google's "Call from Google" isn't the caller (`googleAnnouncement`). With it
+ * taken off, a caller who then says nothing is a hang-up like any other, and a
+ * call that came through the Google ad is never marked Lost.
  */
 export async function classifyCall(input: ClassifyInput): Promise<Classification> {
   const unanswered = input.endReason ? UNANSWERED[input.endReason] : undefined;
@@ -65,7 +103,12 @@ export async function classifyCall(input: ClassifyInput): Promise<Classification
       decidedBy: "rule",
     };
   }
-  if (nothingFromCaller(input)) {
+  const google = googleAnnouncement(input.transcript);
+  // The summary was written from the same transcript, so on a Google call it can't say whether the caller spoke.
+  const silent = google.announced
+    ? nothingFromCaller({ transcript: google.transcript, summary: null })
+    : nothingFromCaller(input);
+  if (silent) {
     return {
       outcome: "qualification_required",
       lostReason: null,
@@ -73,17 +116,20 @@ export async function classifyCall(input: ClassifyInput): Promise<Classification
       matchedService: null,
       callerName: null,
       confidence: "high",
-      reasoning: "Nothing to go on: the caller hung up or didn't say anything.",
+      reasoning: google.announced
+        ? "Google put this call through from the ad, then the caller hung up or didn't say anything."
+        : "Nothing to go on: the caller hung up or didn't say anything.",
       decidedBy: "rule",
     };
   }
+  const seen = { ...input, transcript: google.transcript };
   const { data, model } = await askForJson<ModelVerdict>({
     name: "call_verdict",
-    instructions: buildInstructions(input),
-    input: buildInput(input),
+    instructions: buildInstructions(seen, { googleAd: google.announced }),
+    input: buildInput(seen),
     schema: VERDICT_SCHEMA,
   });
-  return settleVerdict(data, input.services, model);
+  return settleVerdict(data, input.services, model, { googleAd: google.announced });
 }
 
 /**
@@ -110,12 +156,21 @@ export function settleVerdict(
   v: ModelVerdict,
   services: string[],
   decidedBy: string,
+  /** `googleAd`: the call came through the business's Google ad (Google announced it). */
+  call: { googleAd?: boolean } = {},
 ): Classification {
   let outcome = v.outcome;
   let lostReason = outcome === "lost" ? v.lost_reason : null;
   const matchedService =
     outcome === "qualified" && v.matched_service ? findService(v.matched_service, services) : null;
   const notes: string[] = [];
+
+  // Someone found the business through its paid Google ad: a person looks before it's written off.
+  if (outcome === "lost" && call.googleAd) {
+    outcome = "qualification_required";
+    lostReason = null;
+    notes.push("It came through the Google ad, so it isn't marked lost on one call.");
+  }
 
   if (outcome === "lost" && (!lostReason || v.confidence === "low")) {
     outcome = "qualification_required";
@@ -159,12 +214,17 @@ export function findService(value: string, services: string[]): string | null {
   );
 }
 
-export function buildInstructions(input: ClassifyInput): string {
+export function buildInstructions(input: ClassifyInput, call: { googleAd?: boolean } = {}): string {
   const services = input.services.map((s) => s.trim()).filter(Boolean);
   return [
     "You sort phone calls to a trades business into its sales pipeline.",
     "",
     `Business: ${input.businessName}`,
+    ...(call.googleAd
+      ? [
+          'This caller found the business through its Google ad. Google said "Call from Google" to the business before putting them through. Those words were Google\'s, not the caller\'s, even if the summary credits them to the caller, and they have been taken out of the transcript. Judge only what the caller says. Never choose "lost" for this call: if they don\'t want a listed service, choose "qualification_required".',
+        ]
+      : []),
     ...(input.callBack
       ? [
           "This call is the business ringing the caller back, after an earlier call that ended before it was clear what they wanted. Judge what they want from this call.",
