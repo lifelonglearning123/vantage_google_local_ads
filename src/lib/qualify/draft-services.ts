@@ -15,14 +15,96 @@ const MIN_CHARS = 80;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36";
 
+const MAX_REDIRECTS = 5;
+const READ_TIMEOUT_MS = 20_000;
+
+export type WebsiteAddress = { ok: true; url: string; host: string } | { ok: false; message: string };
+
+const NOT_A_WEBSITE: WebsiteAddress = {
+  ok: false,
+  message: "That isn't a website address. Enter one like www.example.co.uk.",
+};
+
+/**
+ * An address the server may fetch: http or https, a domain name, the normal
+ * port, no login in it, and nothing that points inside a network. The address
+ * comes from the Nexus Portal business profile or is typed on the settings
+ * page, so it's checked here and again on every redirect.
+ */
+export function websiteAddress(raw: string | null | undefined): WebsiteAddress {
+  const text = (raw ?? "").trim();
+  if (!text) return { ok: false, message: "Enter the website address." };
+  if (text.length > 300) return NOT_A_WEBSITE;
+  let u: URL;
+  try {
+    u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
+  } catch {
+    return NOT_A_WEBSITE;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return NOT_A_WEBSITE;
+  if (u.username || u.password || u.port) return NOT_A_WEBSITE;
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  // The URL parser turns every spelling of an IPv4 address into dotted digits, and IPv6 into [..].
+  if (!host.includes(".") || /^[\d.]+$/.test(host) || host.startsWith("[")) return NOT_A_WEBSITE;
+  if (/(^|\.)(localhost|local|internal|intranet|lan|home|corp)$/.test(host)) return NOT_A_WEBSITE;
+  return { ok: true, url: u.toString(), host };
+}
+
+/** Where a redirect goes, if it's somewhere the server may follow; otherwise null. */
+export function nextHop(location: string, from: string): string | null {
+  try {
+    const next = websiteAddress(new URL(location, from).toString());
+    return next.ok ? next.url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The website couldn't be read. `reason` says why, in words for the settings page. */
+export class WebsiteReadError extends Error {
+  readonly host: string;
+  readonly reason: string;
+  constructor(host: string, reason: string) {
+    super(`${host}: ${reason}`);
+    this.name = "WebsiteReadError";
+    this.host = host;
+    this.reason = reason;
+  }
+}
+
+/** Why a website couldn't be read, from what fetch threw. */
+export function readProblem(e: unknown): string {
+  const err = (e ?? {}) as { name?: string; message?: string; cause?: { code?: string; cause?: { code?: string } } };
+  if (err.name === "TimeoutError" || err.name === "AbortError") return "the site took too long to answer";
+  const code = err.cause?.code ?? err.cause?.cause?.code ?? "";
+  if (code === "ENOTFOUND") return "there's no website at that address";
+  if (code === "EAI_AGAIN") return "its address couldn't be looked up just now";
+  if (code === "ECONNREFUSED") return "the site refused the connection";
+  if (code === "ECONNRESET" || code === "UND_ERR_SOCKET") return "the site dropped the connection";
+  if (code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT") return "the site took too long to answer";
+  if (code === "CERT_HAS_EXPIRED") return "its security certificate has expired";
+  if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ERR_TLS/.test(code)) return "its security certificate isn't valid";
+  const message = err.message ?? String(e);
+  return message === "fetch failed" ? "the site couldn't be reached" : message;
+}
+
 /**
  * A first draft of a business's services list, read from its own website.
- * Only ever a draft: `npm run setup` shows it and saves nothing until the
- * services are passed back explicitly.
+ * Only ever a draft: the settings page shows it and nothing is saved until
+ * someone presses Save. A website that can't be read throws WebsiteReadError;
+ * anything else (Vantage AI unavailable) throws as it is.
  */
-export async function draftServicesFromWebsite(businessName: string, website: string): Promise<string[]> {
-  const url = /^https?:\/\//i.test(website) ? website : `https://${website}`;
-  const text = (await readWebsite(url)).slice(0, MAX_CHARS);
+export async function draftServicesFromWebsite(
+  businessName: string,
+  address: { url: string; host: string },
+): Promise<string[]> {
+  const { url } = address;
+  let text: string;
+  try {
+    text = (await readWebsite(url)).slice(0, MAX_CHARS);
+  } catch (e) {
+    throw new WebsiteReadError(address.host, readProblem(e));
+  }
 
   const { data } = await askForJson<{ services: string[] }>({
     name: "services_draft",
@@ -48,15 +130,31 @@ export async function draftServicesFromWebsite(businessName: string, website: st
 /**
  * The page's readable text. Plenty of small-business sites (Lovable, Wix,
  * plain React) send an empty page and draw it in the browser, so a thin page
- * is rendered in local headless Chrome. That's fine here: `npm run setup`
- * runs on a PC, never on Vercel.
+ * is rendered in headless Chrome where there is one (a PC running the app).
+ * On Vercel there isn't, and a thin page says so.
+ *
+ * Redirects are followed by hand so each one is checked like the address
+ * itself: a public site can't bounce the server onto a private address.
  */
-async function readWebsite(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml" },
-    redirect: "follow",
-    signal: AbortSignal.timeout(20_000),
-  });
+async function readWebsite(start: string): Promise<string> {
+  const signal = AbortSignal.timeout(READ_TIMEOUT_MS);
+  let url = start;
+  let res: Response | null = null;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    res = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml" },
+      redirect: "manual",
+      signal,
+    });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    if (!location) break;
+    await res.body?.cancel();
+    const next = nextHop(location, url);
+    if (!next) throw new Error("it redirects somewhere that isn't a public website");
+    url = next;
+    res = null;
+  }
+  if (!res) throw new Error("it redirects too many times");
   if (!res.ok) throw new Error(`the site answered ${res.status}`);
   const plain = htmlToText(await res.text());
   if (plain.length >= THIN_PAGE_CHARS) return plain;

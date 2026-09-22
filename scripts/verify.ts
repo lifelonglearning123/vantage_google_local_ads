@@ -13,7 +13,7 @@ import { sortVoices, voiceLabel } from "@/lib/qualify/voices";
 import { classifyCall, findService, nothingFromCaller, settleVerdict, type ModelVerdict } from "@/lib/qualify/classify";
 import { callIsOnNumbers, resolveConfig } from "@/lib/qualify/config";
 import { planOpportunity, type OpportunityPlan, type StageIds } from "@/lib/qualify/decide";
-import { htmlToText } from "@/lib/qualify/draft-services";
+import { htmlToText, nextHop, readProblem, websiteAddress } from "@/lib/qualify/draft-services";
 import type { Classification, Outcome } from "@/lib/qualify/outcomes";
 import { acceptCall, noteRef } from "@/lib/qualify/process";
 import { parseServices } from "@/lib/qualify/services";
@@ -293,6 +293,47 @@ async function main() {
     voicemail.outcome === "qualification_required" && voicemail.decidedBy === "rule" && /voicemail/.test(voicemail.reasoning),
     voicemail,
   );
+
+  section("Website addresses (for suggesting services)");
+  const addr = (raw: string) => websiteAddress(raw);
+  const urlOf = (raw: string) => {
+    const a = addr(raw);
+    return a.ok ? a.url : null;
+  };
+  check("a bare domain gets https", urlOf("www.jselectricalswindon.co.uk") === "https://www.jselectricalswindon.co.uk/");
+  check("http and a path are kept", urlOf(" http://example.co.uk/services ") === "http://example.co.uk/services");
+  check("the host is named for messages", (addr("https://WWW.Example.co.uk/x") as { host: string }).host === "www.example.co.uk");
+  check("empty asks for an address", !addr("  ").ok && /Enter the website/.test((addr("") as { message: string }).message));
+  for (const bad of [
+    "localhost",
+    "http://localhost:3000",
+    "127.0.0.1",
+    "http://2130706433",
+    "http://0x7f.1",
+    "http://[::1]/",
+    "169.254.169.254/latest/meta-data",
+    "https://example.co.uk:8443",
+    "info@leonardopower.com",
+    "https://user:pass@example.co.uk",
+    "ftp://example.co.uk",
+    "javascript:alert(1)",
+    "printer.local",
+    "intranet",
+    "not a website",
+  ]) {
+    check(`refused: ${bad}`, !addr(bad).ok, addr(bad));
+  }
+  check("a redirect to a path on the same site is followed", nextHop("/services", "https://example.co.uk/") === "https://example.co.uk/services");
+  check("a redirect onto a private address is refused", nextHop("http://169.254.169.254/latest", "https://example.co.uk/") === null);
+  check("a redirect to localhost is refused", nextHop("http://localhost:9001/", "https://example.co.uk/") === null);
+  const failedWith = (code: string) => readProblem(Object.assign(new TypeError("fetch failed"), { cause: { code } }));
+  check("no such domain reads as no website there", failedWith("ENOTFOUND") === "there's no website at that address");
+  check("a bad certificate says so", failedWith("ERR_TLS_CERT_ALTNAME_INVALID") === "its security certificate isn't valid");
+  check("an expired certificate says so", failedWith("CERT_HAS_EXPIRED") === "its security certificate has expired");
+  check("a refused connection says so", failedWith("ECONNREFUSED") === "the site refused the connection");
+  check("a timeout says so", readProblem(Object.assign(new Error("x"), { name: "TimeoutError" })) === "the site took too long to answer");
+  check("an unknown network failure is still in words", failedWith("EWHATEVER") === "the site couldn't be reached");
+  check("the site's own answer is kept", readProblem(new Error("the site answered 404")) === "the site answered 404");
 
   section("Website text (for suggesting services)");
   const page =

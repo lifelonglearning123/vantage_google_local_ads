@@ -8,7 +8,7 @@ import { decryptSecret } from "@/lib/crypto";
 import { getLocation, listPipelines, type Pipeline } from "@/lib/ghl";
 import { parsePhoneList } from "@/lib/phone";
 import type { SettingsField } from "@/lib/qualify/config";
-import { draftServicesFromWebsite } from "@/lib/qualify/draft-services";
+import { draftServicesFromWebsite, websiteAddress, WebsiteReadError } from "@/lib/qualify/draft-services";
 import { parseServices } from "@/lib/qualify/services";
 import { STAGE_KINDS } from "@/lib/qualify/stages";
 import { endSession, getSignedInLocation, requireAgency } from "@/lib/session";
@@ -24,7 +24,10 @@ export type SaveState = {
   /** What was stored, tidied (numbers in E.164, services de-duplicated), so the form can show it. */
   saved?: { numbers: string[]; services: string[] };
 } | null;
-export type DraftResult = { ok: true; services: string[] } | { ok: false; message: string };
+export type DraftResult =
+  | { ok: true; services: string[]; host: string }
+  /** `website` is the address that was tried, for the page to offer back to correct; "" when there was none. */
+  | { ok: false; message: string; website: string };
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -98,21 +101,47 @@ export async function saveSettingsAction(target: SettingsTarget, formData: FormD
   };
 }
 
-/** A suggested services list from the business's website. Fills the form only; nothing is saved. */
-export async function draftServicesAction(target: SettingsTarget): Promise<DraftResult> {
+/**
+ * A suggested services list from the business's website. Fills the form only; nothing is saved.
+ *
+ * The address is the one typed on the page, when the page sends one (it offers
+ * the field once the profile's address couldn't be read). Otherwise it's the
+ * Nexus Portal business profile's, read live so a corrected profile counts
+ * straight away, falling back to the copy saved when the client connected.
+ */
+export async function draftServicesAction(target: SettingsTarget, typed?: unknown): Promise<DraftResult> {
   const client = await allowedClient(target);
+  const website = (typeof typed === "string" ? typed.trim() : "") || ((await profileWebsite(client)) ?? "");
+  const fail = (message: string, detail?: string): DraftResult => {
+    console.warn("[draft-services] no suggestion", { locationId: client.locationId, website, detail: detail ?? message });
+    return { ok: false, message, website };
+  };
+  if (!website) {
+    return fail("The Nexus Portal business profile has no website. Enter the address, or type the services in.");
+  }
+  const address = websiteAddress(website);
+  if (!address.ok) return fail(address.message);
+
   try {
-    const website =
-      client.website ?? (await getLocation(decryptSecret(client.tokenEnc), client.locationId)).website;
-    if (!website) {
-      return { ok: false, message: "The Nexus Portal business profile has no website to read. Type the services in instead." };
-    }
-    const services = await draftServicesFromWebsite(client.businessName ?? "this business", website);
+    const services = await draftServicesFromWebsite(client.businessName ?? "this business", address);
     return services.length
-      ? { ok: true, services }
-      : { ok: false, message: "Couldn't find a list of services on the website. Type them in instead." };
+      ? { ok: true, services, host: address.host }
+      : fail(`Couldn't find a list of services on ${address.host}. Try the page that lists them, or type the services in.`);
   } catch (e) {
-    return { ok: false, message: `Couldn't read the website (${errorText(e)}). Type the services in instead.` };
+    if (e instanceof WebsiteReadError) {
+      return fail(`Couldn't read ${e.host}: ${e.reason}. Correct the address, or type the services in.`);
+    }
+    return fail("Vantage AI couldn't suggest services just now. Try again, or type the services in.", errorText(e));
+  }
+}
+
+/** The website in the Nexus Portal business profile now, else the one saved when the client connected. */
+async function profileWebsite(client: ClientSettings): Promise<string | null> {
+  try {
+    const live = await getLocation(decryptSecret(client.tokenEnc), client.locationId);
+    return live.website?.trim() || client.website;
+  } catch {
+    return client.website;
   }
 }
 

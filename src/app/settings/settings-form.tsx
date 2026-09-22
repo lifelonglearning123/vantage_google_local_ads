@@ -114,6 +114,9 @@ export function SettingsForm({
   const [result, setResult] = useState<SaveState>(null);
   const [drafting, startDrafting] = useTransition();
   const [draftNote, setDraftNote] = useState<{ ok: boolean; message: string } | null>(null);
+  // The website address to read. Null until the profile's address couldn't be read; then the
+  // field shows, holding the address that was tried, to correct and try again.
+  const [website, setWebsite] = useState<string | null>(null);
 
   useEffect(() => {
     if (result && !result.ok && result.field) document.getElementById(FOCUS_ID[result.field])?.focus();
@@ -140,12 +143,14 @@ export function SettingsForm({
     startDrafting(async () => {
       setDraftNote(null);
       try {
-        const draft = await draftServicesAction(target);
+        const draft = await draftServicesAction(target, website ?? undefined);
         if (draft.ok) {
           setValues((v) => ({ ...v, services: draft.services.join("\n") }));
-          setDraftNote({ ok: true, message: `Found ${draft.services.length} services on the website. Check them, then save.` });
+          setDraftNote({ ok: true, message: `Found ${draft.services.length} services on ${draft.host}. Check them, then save.` });
         } else {
           setDraftNote({ ok: false, message: draft.message });
+          // Show the field with the address that failed. Once it's showing, keep what was typed.
+          setWebsite((current) => current ?? draft.website);
         }
       } catch (error) {
         unstable_rethrow(error);
@@ -353,10 +358,40 @@ export function SettingsForm({
                 placeholder={"Boiler repairs\nBlocked drains\nBathroom fitting"}
               />
             </div>
+            {website !== null ? (
+              <div className="field">
+                <label htmlFor="website">Website address</label>
+                {/* No name: it isn't a setting, so Save never sends it. Enter reads it instead of saving. */}
+                <input
+                  id="website"
+                  type="text"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={website}
+                  onChange={(e) => setWebsite(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    if (website.trim() && !drafting) suggestServices();
+                  }}
+                  placeholder="www.example.co.uk"
+                  aria-describedby="website-hint"
+                />
+                <p id="website-hint" className="hint">
+                  Used for this suggestion only. To keep it, correct the website in the Nexus Portal business profile.
+                </p>
+              </div>
+            ) : null}
             <div className="inline-actions">
-              <button type="button" className="btn btn-secondary" onClick={suggestServices} disabled={drafting}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={suggestServices}
+                disabled={drafting || (website !== null && !website.trim())}
+              >
                 <Icon name="globe" size={18} />
-                {drafting ? "Reading the website…" : "Suggest from website"}
+                {drafting ? "Reading the website…" : website !== null ? "Try this address" : "Suggest from website"}
               </button>
               {draftNote ? (
                 <span role="status" className={`status-line ${draftNote.ok ? "status-ok" : "status-error"}`}>
