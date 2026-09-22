@@ -65,6 +65,7 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 **Deliberate rules.**
 - `settleVerdict` downgrades to Qualification Required when Lost lacks a reason or is low-confidence, or when Qualified doesn't match the services list.
 - Hang-ups are decided by rule, not the model.
+- "Call from Google" is Google, not the caller: it's what Google says to the business before putting a Local Services ad caller through, and the transcript credits it to the caller. `googleAnnouncement` (`classify.ts`) takes it off the caller's first line. With nothing else from the caller the call is a hang-up, by rule. A call that came through the Google ad is never marked Lost (`settleVerdict`). "I'm calling from Google" is a caller's own words and is judged like any other call.
 - `planOpportunity` only moves forward through the chosen stages. Any other stage belongs to the client's team, and a qualified opportunity is never marked Lost.
 - Outbound calls are ignored, except Signal's call-backs (`callBackOf` set).
 
