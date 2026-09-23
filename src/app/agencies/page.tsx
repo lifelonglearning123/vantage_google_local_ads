@@ -16,7 +16,7 @@ const POINTS: { icon: IconName; title: string; text: string }[] = [
   {
     icon: "refused",
     title: "Time-wasters filtered out",
-    text: "Job seekers, sales pitches, spam and wrong numbers are marked Lost, so nobody chases them.",
+    text: "Job seekers, sales pitches, spam, wrong numbers and jobs the business doesn't do are marked Lost, so nobody chases them.",
   },
   {
     icon: "live",

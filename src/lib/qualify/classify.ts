@@ -86,8 +86,8 @@ const MAX_TRANSCRIPT_CHARS = 16_000;
  * looks at — never away from it.
  *
  * Google's "Call from Google" isn't the caller (`googleAnnouncement`). With it
- * taken off, a caller who then says nothing is a hang-up like any other, and a
- * call that came through the Google ad is never marked Lost.
+ * taken off, a caller who then says nothing is a hang-up like any other, and
+ * everything else is judged like any other call.
  */
 export async function classifyCall(input: ClassifyInput): Promise<Classification> {
   const unanswered = input.endReason ? UNANSWERED[input.endReason] : undefined;
@@ -129,7 +129,7 @@ export async function classifyCall(input: ClassifyInput): Promise<Classification
     input: buildInput(seen),
     schema: VERDICT_SCHEMA,
   });
-  return settleVerdict(data, input.services, model, { googleAd: google.announced });
+  return settleVerdict(data, input.services, model);
 }
 
 /**
@@ -156,8 +156,6 @@ export function settleVerdict(
   v: ModelVerdict,
   services: string[],
   decidedBy: string,
-  /** `googleAd`: the call came through the business's Google ad (Google announced it). */
-  call: { googleAd?: boolean } = {},
 ): Classification {
   let outcome = v.outcome;
   let lostReason = outcome === "lost" ? v.lost_reason : null;
@@ -165,11 +163,19 @@ export function settleVerdict(
     outcome === "qualified" && v.matched_service ? findService(v.matched_service, services) : null;
   const notes: string[] = [];
 
-  // Someone found the business through its paid Google ad: a person looks before it's written off.
-  if (outcome === "lost" && call.googleAd) {
-    outcome = "qualification_required";
-    lostReason = null;
-    notes.push("It came through the Google ad, so it isn't marked lost on one call.");
+  // "Not a job we do" needs a list to judge against, a job they named, and that job off the list.
+  if (outcome === "lost" && lostReason === "not_offered") {
+    const wanted = clean(v.service_requested);
+    const onList = wanted ? findService(wanted, services) : null;
+    if (!services.length || !wanted || onList) {
+      outcome = "qualification_required";
+      lostReason = null;
+      notes.push(
+        onList
+          ? `What they asked for looks like "${onList}", so it isn't marked lost.`
+          : "It isn't clear enough what work they want to rule it out.",
+      );
+    }
   }
 
   if (outcome === "lost" && (!lostReason || v.confidence === "low")) {
@@ -186,7 +192,8 @@ export function settleVerdict(
     outcome,
     lostReason,
     // Someone selling to the business didn't request a service; the lost reason says what they wanted.
-    serviceRequested: outcome === "lost" ? null : clean(v.service_requested),
+    // A job the business doesn't do keeps the job, so the note says what it was.
+    serviceRequested: outcome === "lost" && lostReason !== "not_offered" ? null : clean(v.service_requested),
     matchedService: outcome === "qualified" ? matchedService : null,
     callerName: clean(v.caller_name),
     confidence: v.confidence,
@@ -222,7 +229,7 @@ export function buildInstructions(input: ClassifyInput, call: { googleAd?: boole
     `Business: ${input.businessName}`,
     ...(call.googleAd
       ? [
-          'This caller found the business through its Google ad. Google said "Call from Google" to the business before putting them through. Those words were Google\'s, not the caller\'s, even if the summary credits them to the caller, and they have been taken out of the transcript. Judge only what the caller says. Never choose "lost" for this call: if they don\'t want a listed service, choose "qualification_required".',
+          'This caller found the business through its Google ad. Google said "Call from Google" to the business before putting them through. Those words were Google\'s, not the caller\'s, even if the summary credits them to the caller, and they have been taken out of the transcript. Judge only what the caller says, like any other call.',
         ]
       : []),
     ...(input.callBack
@@ -241,17 +248,19 @@ export function buildInstructions(input: ClassifyInput, call: { googleAd?: boole
     "- accounts_query: wanting the accounts department (invoices, payments, statements, credit control, supplier admin) rather than asking for work to be done",
     "- spam: a robocall, recorded message or scam",
     "- wrong_number: clearly meant to reach someone else",
+    "- not_offered: they say clearly what work they want done, and it is plainly not something this business does: nothing on the services list covers it, not even loosely. For example, a ceiling repair after a leak, for a business that only lists kitchens, bathrooms and extensions. Put the work in service_requested.",
     "",
     '"qualified": the caller wants work done and it matches one of the services listed above. Match on meaning, not exact wording ("my boiler\'s leaking" matches "Boiler repairs"). Copy the matching entry from the list, word for word, into matched_service.',
     "",
-    '"qualification_required": everything else. For example: they want a service that isn\'t on the list or is only loosely related, it\'s unclear what they want, the call was cut short, or there isn\'t enough to decide.',
+    '"qualification_required": everything else. For example: what they want is only loosely related to a listed service or might be part of one, it\'s unclear what work they want, the call was cut short, or there isn\'t enough to decide.',
     "",
     "Rules:",
     "- Judge what the caller wants. The agent's lines are only context.",
     '- Only choose "lost" when it is clear. If in doubt, choose "qualification_required": missing a real customer costs more than one call back.',
-    '- If no services are listed, never choose "qualified".',
+    '- If no services are listed, never choose "qualified" or not_offered.',
+    "- Choose not_offered only when a listed service couldn't reasonably include the work. If it might, choose \"qualification_required\".",
     "- lost_reason is null unless the outcome is lost. matched_service is null unless the outcome is qualified.",
-    '- service_requested: the work they want done as a short label of 2 to 5 words ("Leaking boiler", "Bathroom refit"). null if they don\'t want work done.',
+    '- service_requested: the work they want done as a short label of 2 to 5 words ("Leaking boiler", "Bathroom refit"), also when it\'s work the business doesn\'t do. null if they don\'t want work done.',
     "- caller_name: the caller's name if they gave it, otherwise null.",
     "- reasoning: one or two plain sentences a tradesperson would understand.",
     "- confidence: how sure you are of the outcome.",

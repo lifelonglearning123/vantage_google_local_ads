@@ -59,7 +59,7 @@ export const CHAPTERS = [
     start: 77,
     title: "What happens on a call",
     summary:
-      "The call lands in New Leads, then Vantage AI reads it. Wanting a listed service goes to Qualified. Job seekers, sales calls, spam and wrong numbers go to Lost. Anything unclear, hang-ups included, goes to your call-back stage. Opportunities only ever move forward.",
+      "The call lands in New Leads, then Vantage AI reads it. Wanting a listed service goes to Qualified. Job seekers, sales calls, spam, wrong numbers and clear requests for work you don't do go to Lost. Anything unclear, hang-ups included, goes to your call-back stage. Opportunities only ever move forward.",
   },
 ] as const;
 

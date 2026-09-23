@@ -19,7 +19,7 @@ export const STAGE_WHEN: Record<StageKind, string> = {
   newLeads: "Every new call lands here first",
   qualified: "Wants a service you offer",
   qualificationRequired: "Not clear yet, or hung up",
-  lost: "Job seeker, sales call, accounts, spam or wrong number",
+  lost: "Job seeker, sales, spam call or non-qualified job",
 };
 
 /**
@@ -33,7 +33,7 @@ export function stageNameWarning(kind: StageKind, name: string): string | null {
     return `"${name}" sounds like a lead that's been ruled out. Is that where callers who want your services should go?`;
   }
   if (kind === "lost" && /\b(qualified in|won|booked|hot)\b/.test(n)) {
-    return `"${name}" sounds like a good lead. Is that where job seekers and sales calls should go?`;
+    return `"${name}" sounds like a good lead. Is that where job seekers, sales calls and jobs you don't do should go?`;
   }
   return null;
 }
