@@ -32,8 +32,9 @@ export const SAMPLE_CALLS: Record<string, SampleCall> = {
       "User: Brilliant, thanks.",
     ),
   },
+  // Clear about the work, and it's work a plumber doesn't do: lost, "Not a job we do".
   "not-offered": {
-    expect: "qualification_required",
+    expect: "lost",
     summary: "Caller wants a quote to rewire their house and replace the fuse box.",
     transcript: lines(
       GREETING,
@@ -82,6 +83,17 @@ export const SAMPLE_CALLS: Record<string, SampleCall> = {
       "User: Sorry, wrong number.",
     ),
   },
+  // Might be part of a listed service (bathroom fitting), so a person looks.
+  "loosely-related": {
+    expect: "qualification_required",
+    summary: "Caller wants the tiles in their bathroom redone.",
+    transcript: lines(
+      GREETING,
+      "User: Hi, I'm looking to get the tiles in my bathroom redone, the grout's gone mouldy. Is that something you'd do?",
+      "Agent: I'll take your details and someone will call you back.",
+      "User: Great, it's Tom.",
+    ),
+  },
   vague: {
     expect: "qualification_required",
     summary: "Caller asked about work at their mum's house but didn't say what, and will call back.",
@@ -119,7 +131,7 @@ export const SAMPLE_CALLS: Record<string, SampleCall> = {
     ),
   },
   "google-then-pitch": {
-    expect: "qualification_required",
+    expect: "lost",
     summary: "The call came from Google. The caller offered to improve the business's website ranking.",
     transcript: lines(
       "User: Call from Google.",
@@ -127,6 +139,19 @@ export const SAMPLE_CALLS: Record<string, SampleCall> = {
       "User: Hi, I help local trades get more jobs from Google. Could I speak to the owner about your website?",
       "Agent: I can pass a message on. What's your name?",
       "User: It's Mark, I'll try again later.",
+    ),
+  },
+  // Through the ad, but clear the work isn't theirs (the 2026-09-23 ceiling call, rung back for nothing).
+  "google-not-offered": {
+    expect: "lost",
+    summary:
+      "The user called seeking a ceiling patch repair following water damage. The agent explained the company does plumbing, heating and bathrooms and can't help with ceiling repairs.",
+    transcript: lines(
+      "User: Call from Google.",
+      GREETING,
+      "User: Hi, we had a leak upstairs, it's been fixed now, but it's left a hole in the ceiling. I need someone to patch and plaster the ceiling.",
+      "Agent: I'm sorry, we're plumbing and heating engineers, we don't do plastering or ceiling repairs.",
+      "User: Oh, okay. No worries, thanks.",
     ),
   },
   // A real Google sales call: the caller's own words, so it's judged like any pitch.

@@ -7,6 +7,7 @@ export const LOST_REASONS = [
   "accounts_query",
   "spam",
   "wrong_number",
+  "not_offered",
 ] as const;
 export type LostReason = (typeof LOST_REASONS)[number];
 
@@ -24,6 +25,7 @@ export const LOST_REASON_LABELS: Record<LostReason, string> = {
   accounts_query: "Accounts query",
   spam: "Spam",
   wrong_number: "Wrong number",
+  not_offered: "Not a job we do",
 };
 
 export type Classification = {

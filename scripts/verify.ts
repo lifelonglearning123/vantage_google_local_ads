@@ -151,6 +151,35 @@ async function main() {
     "confident lost keeps its reason and drops the service",
     confidentLost.outcome === "lost" && confidentLost.lostReason === "job_seeker" && confidentLost.serviceRequested === null,
   );
+  const ceiling: ModelVerdict = {
+    ...base,
+    outcome: "lost",
+    lost_reason: "not_offered",
+    service_requested: "Ceiling patch repair",
+    matched_service: null,
+  };
+  const notOffered = settleVerdict(ceiling, services, "m");
+  check(
+    "a clear job the business doesn't do → lost, keeping the job",
+    notOffered.outcome === "lost" && notOffered.lostReason === "not_offered" && notOffered.serviceRequested === "Ceiling patch repair",
+    notOffered,
+  );
+  check(
+    "not a job we do, but it's on the list → Qualification Required",
+    settleVerdict({ ...ceiling, service_requested: "Blocked drain" }, services, "m").outcome === "qualification_required",
+  );
+  check(
+    "not a job we do, with no job named → Qualification Required",
+    settleVerdict({ ...ceiling, service_requested: null }, services, "m").outcome === "qualification_required",
+  );
+  check(
+    "not a job we do, with no services list → Qualification Required",
+    settleVerdict(ceiling, [], "m").outcome === "qualification_required",
+  );
+  check(
+    "not a job we do, low confidence → Qualification Required",
+    settleVerdict({ ...ceiling, confidence: "low" }, services, "m").outcome === "qualification_required",
+  );
   check("'null' caller name cleaned up", settleVerdict({ ...base, caller_name: "null" }, services, "m").callerName === null);
   check("unrelated service doesn't match", findService("Electrical rewiring", services) === null);
   check("agent-only transcript needs no model", nothingFromCaller({ transcript: "Agent: Hello, how can I help?", summary: "Silent." }));
@@ -200,24 +229,14 @@ async function main() {
     googleHangUp.outcome === "qualification_required" && googleHangUp.decidedBy === "rule" && /Google put this call through/.test(googleHangUp.reasoning),
     googleHangUp,
   );
-  const pitchViaAd = settleVerdict(
-    { ...base, outcome: "lost", lost_reason: "sales_pitch", matched_service: null, confidence: "high" },
-    services,
-    "m",
-    { googleAd: true },
-  );
   check(
-    "a Google ad call is never marked lost, whatever the model says",
-    pitchViaAd.outcome === "qualification_required" && pitchViaAd.lostReason === null && /Google ad/.test(pitchViaAd.reasoning),
-    pitchViaAd,
-  );
-  check("a Google ad call can still be qualified", settleVerdict(base, services, "m", { googleAd: true }).outcome === "qualified");
-  check(
-    "without the announcement, a confident lost still stands",
+    "a confident lost stands (a Google ad call is judged the same)",
     settleVerdict({ ...base, outcome: "lost", lost_reason: "sales_pitch", matched_service: null }, services, "m").outcome === "lost",
   );
   const told = buildInstructions({ businessName: "B", services, transcript: null, summary: null, screeningOutcome: null }, { googleAd: true });
-  check("the model is told the words were Google's", /Google said "Call from Google"/.test(told) && /Never choose "lost"/.test(told));
+  check("the model is told the words were Google's", /Google said "Call from Google"/.test(told));
+  check("a Google ad caller can be lost: a seller or job seeker through the ad", !/Never choose "lost"/.test(told));
+  check("the model is told about jobs the business doesn't do", /- not_offered:/.test(told));
   check(
     "other calls get no Google note",
     !/Call from Google/.test(buildInstructions({ businessName: "B", services, transcript: null, summary: null, screeningOutcome: null })),

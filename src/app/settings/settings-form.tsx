@@ -16,7 +16,7 @@ const ROWS: { kind: StageKind; label: string; lane: string; icon: IconName; opti
   { kind: "newLeads", label: "Every new call lands in", lane: "lane-new", icon: "phone" },
   { kind: "qualified", label: "Wants a service you offer", lane: "lane-qualified", icon: "live" },
   { kind: "qualificationRequired", label: "Not clear yet, or hung up", lane: "lane-contacted", icon: "waiting" },
-  { kind: "lost", label: "Job seeker, sales call, spam or wrong number", lane: "lane-lost", icon: "refused", optional: true },
+  { kind: "lost", label: "Job seeker, sales, spam call or non-qualified job", lane: "lane-lost", icon: "refused", optional: true },
 ];
 
 // Where the cursor goes when the save names a problem.
