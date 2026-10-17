@@ -19,6 +19,8 @@ export type ClassifyInput = {
   endReason?: string | null;
   /** The business ringing the caller back after an earlier call. */
   callBack?: boolean;
+  /** The business ringing someone who had just enquired (decide.ts, `leadCallPlan`). */
+  leadCall?: boolean;
 };
 
 /** Ways a call-back ends without anyone to talk to, and what the note says. */
@@ -28,6 +30,15 @@ const UNANSWERED: Record<string, string> = {
   dial_failed: "The call-back didn't connect.",
   invalid_destination: "Their number couldn't be reached.",
   voicemail_reached: "The call-back reached their voicemail, and a message was left.",
+};
+
+/** The same, for a lead call. No message is claimed: a lead-call agent may have no voicemail set. */
+const UNANSWERED_LEAD: Record<string, string> = {
+  dial_no_answer: "They didn't answer.",
+  dial_busy: "Their line was busy.",
+  dial_failed: "The call didn't connect.",
+  invalid_destination: "Their number couldn't be reached.",
+  voicemail_reached: "The call reached their voicemail.",
 };
 
 /**
@@ -90,7 +101,9 @@ const MAX_TRANSCRIPT_CHARS = 16_000;
  * everything else is judged like any other call.
  */
 export async function classifyCall(input: ClassifyInput): Promise<Classification> {
-  const unanswered = input.endReason ? UNANSWERED[input.endReason] : undefined;
+  const unanswered = input.endReason
+    ? (input.leadCall ? UNANSWERED_LEAD : UNANSWERED)[input.endReason]
+    : undefined;
   if (unanswered) {
     return {
       outcome: "qualification_required",
@@ -235,6 +248,11 @@ export function buildInstructions(input: ClassifyInput, call: { googleAd?: boole
     ...(input.callBack
       ? [
           "This call is the business ringing the caller back, after an earlier call that ended before it was clear what they wanted. Judge what they want from this call.",
+        ]
+      : []),
+    ...(input.leadCall
+      ? [
+          "This call is the business ringing someone who had just enquired, for example through an ad or an online form. The business spoke first. Judge what they want from this call, as if they had rung in.",
         ]
       : []),
     "Services this business supplies:",

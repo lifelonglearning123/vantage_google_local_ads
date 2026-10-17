@@ -68,7 +68,12 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 - Hang-ups are decided by rule, not the model.
 - "Call from Google" is Google, not the caller: it's what Google says to the business before putting a Local Services ad caller through, and the transcript credits it to the caller. `googleAnnouncement` (`classify.ts`) takes it off the caller's first line. With nothing else from the caller the call is a hang-up, by rule. Otherwise a call through the Google ad is judged like any other: a seller or job seeker who came through the ad is Lost. "I'm calling from Google" is a caller's own words and is judged like any other call.
 - `planOpportunity` only moves forward through the chosen stages. Any other stage belongs to the client's team, and a qualified opportunity is never marked Lost.
-- Outbound calls are ignored, except Signal's call-backs (`callBackOf` set).
+- **Lead calls.** Signal only sends calls an AI agent handled, so an outbound call that isn't a call-back is the AI ringing someone the business wants to reach — usually a lead who has just enquired through an ad or a form, rung within seconds by a workflow. Until 2026-10-17 they were ignored as "updated by the salesperson", and J's Electrical's Facebook leads sat in New Leads unsorted. Now (`leadCallPlan`, `leadCallLeaves` in `decide.ts`):
+  - sorted only while the contact's open opportunity in the chosen pipeline is still in **New Leads**; no open opportunity, or one the team has moved on, is ignored (2xx);
+  - a lead call **never creates** an opportunity or a contact;
+  - the model is told the business rang a fresh enquiry (`leadCall` in `classify.ts`);
+  - not reached — no answer, busy, voicemail, said nothing (any verdict decided by rule) — stays in New Leads, and the note says so;
+  - never asks for a call-back; the note opens "The AI rang them after their enquiry."
 
 **Don't:**
 - add a database, or store call or customer data;
@@ -80,6 +85,7 @@ Signal (`C:\python\Signal`) POSTs a signed `call.synced` webhook, and this app s
 - decide in this app when, from which number or whether Signal rings a caller back: send the call ID, the reason and the chosen voice, nothing else;
 - add a second place to choose the call-back voice (Signal's agent settings deliberately has none);
 - ask for a call-back for an outbound call, including a call-back's own result;
+- let a lead call create an opportunity, or move one that has left New Leads;
 - remove the `key` on the settings forms: a remount per client stops one client's typed settings being saved into another's;
 - read env at import time;
 - log tokens.

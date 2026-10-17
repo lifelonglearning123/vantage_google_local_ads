@@ -20,7 +20,7 @@ import {
   type ModelVerdict,
 } from "@/lib/qualify/classify";
 import { callIsOnNumbers, resolveConfig } from "@/lib/qualify/config";
-import { planOpportunity, type OpportunityPlan, type StageIds } from "@/lib/qualify/decide";
+import { leadCallLeaves, leadCallPlan, planOpportunity, type OpportunityPlan, type StageIds } from "@/lib/qualify/decide";
 import { htmlToText, nextHop, readProblem, websiteAddress } from "@/lib/qualify/draft-services";
 import type { Classification, Outcome } from "@/lib/qualify/outcomes";
 import { acceptCall, noteRef } from "@/lib/qualify/process";
@@ -258,6 +258,50 @@ async function main() {
   check("Qualified + lost → left", plan("lost", "st-q").action === "leave");
   check("QR + lost → marked lost", samePlan(plan("lost", "st-qr"), { action: "move", stageId: "st-qr", status: "lost" }));
   check("a salesperson's stage → left", plan("qualified", "st-quote").action === "leave");
+
+  section("Lead calls (the AI ringing a fresh enquiry)");
+  check("no open opportunity → not sorted", leadCallPlan(undefined, "st-new").sort === false);
+  check("still in New Leads → sorted", leadCallPlan({ pipelineStageId: "st-new" }, "st-new").sort === true);
+  check("moved on to Qualification Required → not sorted", leadCallPlan({ pipelineStageId: "st-qr" }, "st-new").sort === false);
+  check("in a salesperson's stage → not sorted", leadCallPlan({ pipelineStageId: "st-quote" }, "st-new").sort === false);
+  check("decided by rule (not reached) → stays in New Leads", leadCallLeaves("rule") === "They weren't reached, so it stays in New Leads.");
+  check("decided by the model → planned as usual", leadCallLeaves("model") === null);
+  const leadNoAnswer = await classifyCall({
+    businessName: "B",
+    services,
+    transcript: null,
+    summary: null,
+    screeningOutcome: null,
+    endReason: "dial_no_answer",
+    leadCall: true,
+  });
+  check(
+    "lead call nobody answered: decided by rule, no mention of a call-back",
+    leadNoAnswer.decidedBy === "rule" && leadNoAnswer.reasoning === "They didn't answer.",
+    leadNoAnswer,
+  );
+  const leadVoicemail = await classifyCall({
+    businessName: "B",
+    services,
+    transcript: null,
+    summary: null,
+    screeningOutcome: null,
+    endReason: "voicemail_reached",
+    leadCall: true,
+  });
+  check("lead call to voicemail: no message claimed", leadVoicemail.reasoning === "The call reached their voicemail.", leadVoicemail);
+  check(
+    "lead call: the model is told the business rang a fresh enquiry",
+    /ringing someone who had just enquired/.test(
+      buildInstructions({ businessName: "B", services, transcript: null, summary: null, screeningOutcome: null, leadCall: true }),
+    ),
+  );
+  check(
+    "inbound call: no lead-call line",
+    !/ringing someone who had just enquired/.test(
+      buildInstructions({ businessName: "B", services, transcript: null, summary: null, screeningOutcome: null }),
+    ),
+  );
 
   section("Client settings checked against the live pipeline");
   const stage = (id: string, name: string) => ({ id, name });
@@ -620,7 +664,6 @@ async function main() {
   const oppsOf = (contactId: string | undefined) => ghl.opps.filter((o) => o.contactId === contactId);
   const notesOf = (contactId: string) => ghl.notes.filter((x) => x.contactId === contactId);
 
-  check("outbound call ignored", (await accept(makeEvent({ direction: "outbound" }))).kind === "ignored");
   check("sub-account that isn't connected: ignored", (await accept(makeEvent({ locationId: "loc2" }))).kind === "ignored");
   const otherAgency = await acceptCall(makeEvent({ contactId: "c-other" }), OTHER, { classify: verdict("qualified") });
   check(
@@ -631,6 +674,24 @@ async function main() {
   const offList = await accept(makeEvent({ contactId: "c-offlist", to: "+441223000000" }), { classify: verdict("qualified") });
   check("call to a number the client didn't choose: ignored", offList.kind === "ignored", offList);
   check("ignored calls never reach GoHighLevel", ghl.log.length === 0, ghl.log);
+
+  // Lead calls: the AI ringing someone who has just enquired (decide.ts,
+  // leadCallPlan). Telling one apart takes a look at the lead's opportunity,
+  // so these read GoHighLevel — but an ignored one writes nothing.
+  const leadNoOpp = await accept(makeEvent({ direction: "outbound", contactId: "c-lead-none" }), { classify: verdict("qualified") });
+  check(
+    "lead call to a contact with no open opportunity: ignored, nothing created",
+    leadNoOpp.kind === "ignored" && oppsOf("c-lead-none").length === 0,
+    leadNoOpp,
+  );
+  const leadNoContact = await accept(makeEvent({ direction: "outbound", contactId: null }), { classify: verdict("qualified") });
+  check("lead call without a contact from Signal: ignored, no contact made", leadNoContact.kind === "ignored", leadNoContact);
+  check(
+    "ignored lead calls only read GoHighLevel",
+    ghl.log.every((line) => line.startsWith("GET ")),
+    ghl.log,
+  );
+  ghl.log.length = 0;
 
   const first = makeEvent({ contactId: "c-dave" });
   const a1 = await accept(first, { classify: verdict("qualified") });
@@ -743,6 +804,55 @@ async function main() {
     oppsOf("c-dave")[0],
   );
 
+  // A Facebook lead lands in New Leads; the outbound AI rings it seconds later.
+  const pushOpp = (id: string, contactId: string, stage: string) =>
+    ghl.opps.push({
+      id,
+      name: `+447700900999 – Phone enquiry`,
+      status: "open",
+      pipelineId: "p-sales",
+      pipelineStageId: stage,
+      contactId,
+      locationId: FAKE_LOCATION,
+      updatedAt: new Date().toISOString(),
+    });
+  pushOpp("opp-fb", "c-fb", "st-new");
+  const fbCall = makeEvent({ direction: "outbound", contactId: "c-fb" });
+  const fb = await run(fbCall, verdict("qualified"));
+  check(
+    "lead call, lead still in New Leads: sorted on its own opportunity, none created",
+    fb.accepted.kind === "accepted" && !fb.accepted.created && oppsOf("c-fb").length === 1,
+    fb.accepted,
+  );
+  check("lead call: moved to Qualified", oppsOf("c-fb")[0]?.pipelineStageId === "st-q" && fb.finished?.action === "moved", fb.finished);
+  check(
+    "lead call: the note says the AI rang them, and carries the reference",
+    notesOf("c-fb").some((x) => x.body.startsWith("The AI rang them after their enquiry.") && x.body.includes(noteRef(fbCall.call.id))),
+    notesOf("c-fb"),
+  );
+  check("lead call sent again → duplicate", (await accept(fbCall)).kind === "duplicate");
+
+  pushOpp("opp-worked", "c-worked", "st-qr");
+  const worked = await accept(makeEvent({ direction: "outbound", contactId: "c-worked" }), { classify: verdict("qualified") });
+  check(
+    "lead call to a lead the team has moved on: ignored, left where it is",
+    worked.kind === "ignored" && oppsOf("c-worked")[0]?.pipelineStageId === "st-qr",
+    worked,
+  );
+
+  pushOpp("opp-noanswer", "c-noanswer", "st-new");
+  const noAnswer = await run(
+    makeEvent({ direction: "outbound", contactId: "c-noanswer", endReason: "dial_no_answer" }),
+    verdict("qualification_required", { decidedBy: "rule", reasoning: "They didn't answer." }),
+  );
+  check(
+    "lead call nobody answered: stays in New Leads, note says they weren't reached",
+    oppsOf("c-noanswer")[0]?.pipelineStageId === "st-new" &&
+      noAnswer.finished?.action === "left" &&
+      notesOf("c-noanswer").some((x) => x.body.includes("They weren't reached, so it stays in New Leads.")),
+    noAnswer.finished,
+  );
+
   const twin = makeEvent({ contactId: "c-twin" });
   const [x, y] = await Promise.all([
     accept(twin, { classify: verdict("qualified") }),
@@ -757,6 +867,20 @@ async function main() {
   const signal = await startFakeSignal({ secret: AGENCY.signalWebhookSecret });
   await saveClient(makeSettings({ callBacks: true }));
   const lastLine = (contactId: string) => notesOf(contactId).at(-1)?.body ?? "";
+
+  // A lead call left in Qualification Required never asks for a call-back:
+  // the business has only just rung them.
+  pushOpp("opp-lead-qr", "c-lead-qr", "st-new");
+  const beforeLead = signal.requests.length;
+  await run(
+    makeEvent({ direction: "outbound", contactId: "c-lead-qr", callBackUrl: signal.url }),
+    verdict("qualification_required"),
+  );
+  check(
+    "lead call with call-backs on: moved to Qualification Required, Signal not asked",
+    oppsOf("c-lead-qr")[0]?.pipelineStageId === "st-qr" && signal.requests.length === beforeLead,
+    { stage: oppsOf("c-lead-qr")[0]?.pipelineStageId, asked: signal.requests.length - beforeLead },
+  );
 
   await saveClient(makeSettings({ callBacks: true, callBackVoiceId: "v-m1" }));
   const hangUpCall = makeEvent({ contactId: "c-hangup", callBackUrl: signal.url });
