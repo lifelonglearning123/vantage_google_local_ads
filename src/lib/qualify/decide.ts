@@ -25,6 +25,42 @@ export type OpportunityPlan =
  *  - "lost" only applies before it has been qualified — a qualified customer
  *    ringing about their invoice is not a lost deal.
  */
+/**
+ * A lead call: an outbound call that isn't one of Signal's call-backs. Signal
+ * only sends calls an AI agent handled, so this is the AI ringing someone the
+ * business wants to reach — most often a lead who has just enquired through
+ * an ad or a form, rung within seconds by a workflow (J's Electrical's
+ * Facebook leads from 10 October 2026, which sat in New Leads unsorted while
+ * outbound calls were ignored).
+ *
+ * It is sorted only while that lead's opportunity is still untouched in New
+ * Leads. One the team has moved on is theirs, and a contact with no open
+ * opportunity in the pipeline is not a lead this app was asked to sort — a
+ * lead call never creates one.
+ */
+export function leadCallPlan(
+  open: { pipelineStageId: string } | undefined,
+  newLeadsStageId: string,
+): { sort: true } | { sort: false; reason: string } {
+  if (!open) {
+    return { sort: false, reason: "an outbound call only sorts an open opportunity that's already in the pipeline" };
+  }
+  if (open.pipelineStageId !== newLeadsStageId) {
+    return { sort: false, reason: "the opportunity has already moved on from New Leads, so it's the team's" };
+  }
+  return { sort: true };
+}
+
+/**
+ * On a lead call, a verdict decided by rule — they didn't pick up, it went to
+ * voicemail, or they said nothing — means the lead wasn't reached. It stays in
+ * New Leads rather than reading as "Contacted". Null when the call should be
+ * planned as usual.
+ */
+export function leadCallLeaves(decidedBy: string): string | null {
+  return decidedBy === "rule" ? "They weren't reached, so it stays in New Leads." : null;
+}
+
 export function planOpportunity(
   outcome: Outcome,
   currentStageId: string,

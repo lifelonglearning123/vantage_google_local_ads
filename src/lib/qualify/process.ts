@@ -14,7 +14,7 @@ import type { CallSyncedEvent } from "@/lib/signal/contract";
 import { callBackDecision, callBackNoteLine, requestCallBack } from "./call-back";
 import { classifyCall } from "./classify";
 import { callIsOnNumbers, loadLiveConfig, type LiveConfig } from "./config";
-import { planOpportunity } from "./decide";
+import { leadCallLeaves, leadCallPlan, planOpportunity } from "./decide";
 import { LOST_REASON_LABELS, OUTCOME_LABELS, type Classification, type Outcome } from "./outcomes";
 
 /**
@@ -65,11 +65,12 @@ export const noteRef = (callId: string) => `Signal call ${callId}`;
 
 export async function acceptCall(event: CallSyncedEvent, agency: Agency, deps: ProcessDeps = {}): Promise<AcceptResult> {
   const { call } = event;
-  // Outbound calls are the team's, except a call-back: Signal ringing a caller
-  // back for this app, whose result is sorted like the call it returns.
-  if (call.direction !== "inbound" && !call.callBackOf) {
-    return { kind: "ignored", reason: "outbound calls are updated by the salesperson" };
-  }
+  // Signal only sends calls an AI agent handled, so an outbound call is
+  // either a call-back (sorted like the call it returns) or a lead call: the
+  // AI ringing someone who has just enquired. A lead call is sorted only
+  // while that lead is still in New Leads, and never creates an opportunity
+  // (decide.ts, `leadCallPlan`).
+  const leadCall = call.direction !== "inbound" && !call.callBackOf;
   const locationId = event.ghl?.locationId;
   if (!locationId) return { kind: "ignored", reason: "the call has no Nexus Portal sub-account" };
 
@@ -91,6 +92,9 @@ export async function acceptCall(event: CallSyncedEvent, agency: Agency, deps: P
     const customerPhone = customerNumber(call);
     let contactId = event.ghl?.contactId ?? null;
     if (!contactId) {
+      // A lead call is about a lead who is already in the pipeline, so there
+      // is nobody to create.
+      if (leadCall) return { kind: "ignored", reason: "an outbound call without a contact from Signal" };
       if (!customerPhone) throw new Error("No contact from Signal, and no caller number to find one by.");
       contactId = await findOrCreateContact(token, { locationId, phone: customerPhone, name: call.callerName ?? null });
     }
@@ -104,6 +108,10 @@ export async function acceptCall(event: CallSyncedEvent, agency: Agency, deps: P
 
     const pipelineId = config.pipeline.id;
     const open = await findOpenOpportunities(token, { locationId, contactId, pipelineId });
+    if (leadCall) {
+      const plan = leadCallPlan(open[0], config.stages.newLeads);
+      if (!plan.sort) return { kind: "ignored", reason: plan.reason };
+    }
     let opportunity = open[0];
     const created = !opportunity;
     if (!opportunity) {
@@ -127,7 +135,7 @@ export async function acceptCall(event: CallSyncedEvent, agency: Agency, deps: P
     }
 
     handedOver = true;
-    const ready: Ready = { event, agency, contactId, config, opportunity };
+    const ready: Ready = { event, agency, contactId, config, opportunity, leadCall };
     return {
       kind: "accepted",
       opportunityId: opportunity.id,
@@ -145,11 +153,13 @@ type Ready = {
   contactId: string;
   config: LiveConfig;
   opportunity: Opportunity;
+  /** The AI rang a lead who had just enquired (see `acceptCall`). */
+  leadCall: boolean;
 };
 
 /** Never throws: whatever happens, the contact gets a note saying so. */
 async function finishCall(
-  { event, agency, contactId, config, opportunity }: Ready,
+  { event, agency, contactId, config, opportunity, leadCall }: Ready,
   classify: typeof classifyCall,
 ): Promise<FinishResult> {
   const { call } = event;
@@ -170,13 +180,17 @@ async function finishCall(
       screeningOutcome: call.leadScreening?.outcome ?? null,
       endReason: call.endReason ?? null,
       callBack: !!call.callBackOf,
+      leadCall,
     });
-    const plan = planOpportunity(verdict.outcome, opportunity.pipelineStageId, {
-      newLeads,
-      qualificationRequired,
-      qualified,
-      lost,
-    });
+    const notReached = leadCall ? leadCallLeaves(verdict.decidedBy) : null;
+    const plan = notReached
+      ? ({ action: "leave", reason: notReached } as const)
+      : planOpportunity(verdict.outcome, opportunity.pipelineStageId, {
+          newLeads,
+          qualificationRequired,
+          qualified,
+          lost,
+        });
     if (plan.action === "move") {
       // Rename only the placeholder a first call gave it; a name someone typed stays.
       const rename = opportunity.name.endsWith(`– ${PLACEHOLDER_WHAT}`);
@@ -222,7 +236,11 @@ async function finishCall(
       ? ["No services have been added in the app yet, so no caller can be Qualified."]
       : [];
   try {
-    await addContactNote(token, contactId, buildNote(verdict, result, warnings, call.id, !!call.callBackOf));
+    await addContactNote(
+      token,
+      contactId,
+      buildNote(verdict, result, warnings, call.id, call.callBackOf ? "call_back" : leadCall ? "lead_call" : "inbound"),
+    );
   } catch (e) {
     console.error("[qualify] note not added", {
       callId: call.id,
@@ -282,15 +300,19 @@ export function opportunityName(
   return `${who} – ${what}`;
 }
 
+/** Who rang whom: they rang in, Signal rang them back, or the AI rang a fresh lead. */
+export type CallKind = "inbound" | "call_back" | "lead_call";
+
 export function buildNote(
   v: Classification | null,
   r: FinishResult,
   warnings: string[],
   callId: string,
-  isCallBack = false,
+  kind: CallKind = "inbound",
 ): string {
   const lines: string[] = [];
-  if (isCallBack) lines.push("The AI receptionist rang them back after their earlier call.");
+  if (kind === "call_back") lines.push("The AI receptionist rang them back after their earlier call.");
+  if (kind === "lead_call") lines.push("The AI rang them after their enquiry.");
   if (v) {
     lines.push(
       `Call qualification: ${OUTCOME_LABELS[v.outcome]}${v.lostReason ? ` (${LOST_REASON_LABELS[v.lostReason]})` : ""}`,
